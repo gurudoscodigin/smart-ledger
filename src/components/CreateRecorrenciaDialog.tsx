@@ -15,13 +15,6 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const CATEGORIAS_PADRAO = [
-  { label: "Software", value: "software" },
-  { label: "Contas do Escritório", value: "contas_escritorio" },
-  { label: "Prestação de Serviços", value: "prestacao_servicos" },
-  { label: "Colaboradores", value: "colaboradores" },
-  { label: "Marketing", value: "marketing" },
-];
 
 export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
   const { create } = useRecorrencias();
