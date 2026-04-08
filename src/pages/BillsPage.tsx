@@ -1,11 +1,11 @@
 import { useState, useRef } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, FileDown } from "lucide-react";
+import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image } from "lucide-react";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { useRecorrencias } from "@/hooks/useRecorrencias";
@@ -13,8 +13,6 @@ import { useTransacoes } from "@/hooks/useTransacoes";
 import { useComprovantes } from "@/hooks/useComprovantes";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
-import { useQueryClient } from "@tanstack/react-query";
 
 function AttachSection({ transacaoId }: { transacaoId: string }) {
   const { data: comprovantes, upload } = useComprovantes(transacaoId);
@@ -210,7 +208,7 @@ export default function BillsPage() {
                           <p className="text-sm font-medium tabular-nums mr-1">
                             R$ {Number(tx.valor).toFixed(2)}
                           </p>
-                          <AttachButton transacaoId={tx.id} />
+                          <AttachSection transacaoId={tx.id} />
                         </div>
                       </div>
                     </CardContent>
