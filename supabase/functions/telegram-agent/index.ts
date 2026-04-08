@@ -1182,7 +1182,7 @@ async function handleOrphanFile(
 }
 
 // ─── AUDIO TRANSCRIPTION ───
-async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: string): Promise<string | null> {
+async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: string, openaiKey: string): Promise<string | null> {
   try {
     // Download audio file
     const fileResponse = await fetch(`${GATEWAY_URL}/getFile`, {
@@ -1214,7 +1214,7 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
     const response = await fetch(AI_GATEWAY, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${lovableKey}`,
+        Authorization: `Bearer ${openaiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
