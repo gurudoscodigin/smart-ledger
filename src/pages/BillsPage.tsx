@@ -62,7 +62,7 @@ export default function BillsPage() {
   const [recOpen, setRecOpen] = useState(false);
   const [avulsaOpen, setAvulsaOpen] = useState(false);
   const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
-  const { data: txData, isLoading: txLoading, payTransaction } = useTransacoes();
+  const { data: txData, isLoading: txLoading, payTransaction, softDeleteTransaction } = useTransacoes();
 
   const allTxs = txData?.currentMonth || [];
   const overdue = txData?.overdue || [];
@@ -70,7 +70,11 @@ export default function BillsPage() {
   const variaveis = allTxs.filter(t => t.categoria_tipo === "variavel");
   const dividas = allTxs.filter(t => t.categoria_tipo === "divida");
 
-  // Alert sections: upcoming (next 48h) and overdue
+  // Separate recorrencias: Fixas (not variable) vs Variáveis (variable)
+  const recFixas = (recorrencias || []).filter((r: any) => !r.eh_variavel);
+  const recVariaveis = (recorrencias || []).filter((r: any) => r.eh_variavel);
+
+  // Alert sections
   const now = new Date();
   const twoDaysMs = 2 * 86400000;
   const upcomingDue = allTxs.filter(t => {
@@ -79,6 +83,60 @@ export default function BillsPage() {
     const diff = dueDate.getTime() - now.getTime();
     return diff > 0 && diff <= twoDaysMs;
   });
+
+  const renderRecList = (items: any[], emptyMsg: string) => {
+    if (recLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
+    if (!items.length) {
+      return (
+        <Card className="glass-card">
+          <CardContent className="py-12 text-center">
+            <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-muted-foreground text-sm">{emptyMsg}</p>
+          </CardContent>
+        </Card>
+      );
+    }
+    return (
+      <div className="grid gap-3">
+        {items.map((rec: any) => (
+          <Card key={rec.id} className="glass-card">
+            <CardContent className="py-4 px-5">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm truncate">{rec.nome}</p>
+                    {rec.eh_variavel ? (
+                      <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/40 text-violet-500">
+                        <ToggleRight className="w-3 h-3" /> Variável
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] gap-1 border-sky-400/40 text-sky-500">
+                        <CalendarClock className="w-3 h-3" /> Fixa
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <span>Vence dia {rec.dia_vencimento_padrao}</span>
+                    {rec.cartoes && <span>• {rec.cartoes.apelido}</span>}
+                    {rec.bancos && <span>• {rec.bancos.nome}</span>}
+                    {rec.categorias && <span>• {rec.categorias.nome}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium tabular-nums mr-1">
+                    {rec.eh_variavel ? "~" : ""}R$ {Number(rec.valor_estimado).toFixed(2)}
+                  </p>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => remove.mutate(rec.id)}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
 
   const renderTxList = (items: any[], emptyIcon: any, emptyMsg: string) => {
     if (txLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
@@ -106,8 +164,12 @@ export default function BillsPage() {
                         <CreditCard className="w-3 h-3" /> {tx.parcela_atual}/{tx.parcela_total}
                       </Badge>
                     ) : tx.categoria_tipo === "variavel" ? (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-status-pending/30 text-status-pending">
+                      <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/40 text-violet-500">
                         <TrendingUp className="w-3 h-3" /> Variável
+                      </Badge>
+                    ) : tx.categoria_tipo === "fixa" ? (
+                      <Badge variant="outline" className="text-[10px] gap-1 border-sky-400/40 text-sky-500">
+                        <CalendarClock className="w-3 h-3" /> Fixa
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="text-[10px] gap-1 border-accent-foreground/30 text-accent-foreground">
@@ -137,6 +199,10 @@ export default function BillsPage() {
                       <Check className="w-3 h-3" /> Pagar
                     </Button>
                   )}
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    onClick={() => softDeleteTransaction.mutate(tx.id)} disabled={softDeleteTransaction.isPending}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                   <AttachSection transacaoId={tx.id} />
                 </div>
               </div>
@@ -221,66 +287,43 @@ export default function BillsPage() {
             <TabsTrigger value="avulsas" className="gap-1.5"><Zap className="w-4 h-4" /> Avulsas</TabsTrigger>
           </TabsList>
 
-          {/* CONTAS FIXAS */}
+          {/* CONTAS FIXAS (recorrentes não-variáveis + transações fixas do mês) */}
           <TabsContent value="fixas" className="space-y-4 pt-4">
             <div className="flex justify-end">
               <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Fixa</Button>
             </div>
-            {recLoading ? (
-              <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
-            ) : !recorrencias?.length ? (
-              <Card className="glass-card">
-                <CardContent className="py-12 text-center">
-                  <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                  <p className="text-muted-foreground text-sm">Nenhuma conta fixa cadastrada</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-3">
-                {recorrencias.map((rec: any) => (
-                  <Card key={rec.id} className="glass-card">
-                    <CardContent className="py-4 px-5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium text-sm truncate">{rec.nome}</p>
-                            {rec.eh_variavel && (
-                              <Badge variant="outline" className="text-[10px] gap-1 border-status-pending/30 text-status-pending">
-                                <ToggleRight className="w-3 h-3" /> Variável
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                            <span>Vence dia {rec.dia_vencimento_padrao}</span>
-                            {rec.cartoes && <span>• {rec.cartoes.apelido}</span>}
-                            {rec.bancos && <span>• {rec.bancos.nome}</span>}
-                            {rec.categorias && <span>• {rec.categorias.nome}</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium tabular-nums mr-1">
-                            {rec.eh_variavel ? "~" : ""}R$ {Number(rec.valor_estimado).toFixed(2)}
-                          </p>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => remove.mutate(rec.id)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Modelos Recorrentes</h3>
+            {renderRecList(recFixas, "Nenhuma conta fixa cadastrada")}
+
+            {/* Fixed transactions this month */}
+            {allTxs.filter(t => t.categoria_tipo === "fixa").length > 0 && (
+              <>
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6">Lançamentos do Mês</h3>
+                {renderTxList(
+                  allTxs.filter(t => t.categoria_tipo === "fixa"),
+                  <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
+                  ""
+                )}
+              </>
             )}
           </TabsContent>
 
-          {/* CONTAS VARIÁVEIS */}
+          {/* CONTAS VARIÁVEIS (recorrentes variáveis + transações variáveis do mês) */}
           <TabsContent value="variaveis" className="space-y-4 pt-4">
             <div className="flex justify-end">
-              <Button onClick={() => setAvulsaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta</Button>
+              <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Variável</Button>
             </div>
-            {renderTxList(variaveis,
-              <TrendingUp className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
-              "Nenhuma conta variável neste mês"
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Modelos Recorrentes</h3>
+            {renderRecList(recVariaveis, "Nenhuma conta variável cadastrada")}
+
+            {variaveis.length > 0 && (
+              <>
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6">Lançamentos do Mês</h3>
+                {renderTxList(variaveis,
+                  <TrendingUp className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
+                  ""
+                )}
+              </>
             )}
           </TabsContent>
 

@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Tables, TablesInsert } from "@/integrations/supabase/types";
+import type { Tables } from "@/integrations/supabase/types";
 
 type Banco = Tables<"bancos">;
 
@@ -40,5 +40,20 @@ export function useBancos() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  return { ...query, create };
+  const updateSaldo = useMutation({
+    mutationFn: async ({ id, saldo_atual }: { id: string; saldo_atual: number }) => {
+      const { error } = await supabase
+        .from("bancos")
+        .update({ saldo_atual })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bancos"] });
+      toast.success("Saldo atualizado");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return { ...query, create, updateSaldo };
 }
