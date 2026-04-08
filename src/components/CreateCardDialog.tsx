@@ -116,8 +116,17 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
               )}
             </div>
             <div>
-              <Label>Validade</Label>
-              <Input type="date" value={form.data_validade} onChange={e => setForm(f => ({ ...f, data_validade: e.target.value }))} />
+              <Label>Validade (MM/AA)</Label>
+              <Input
+                placeholder="08/29"
+                maxLength={5}
+                value={form.data_validade}
+                onChange={e => {
+                  let v = e.target.value.replace(/[^\d]/g, "");
+                  if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2, 4);
+                  setForm(f => ({ ...f, data_validade: v }));
+                }}
+              />
             </div>
           </div>
           <Button type="submit" className="w-full" disabled={create.isPending || !form.banco_id}>
