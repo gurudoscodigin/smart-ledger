@@ -32,20 +32,38 @@ Deno.serve(async (req) => {
     const serviceKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // ─── WHITELIST: Verify telegram_id ───
+    // ─── GLOBAL BOT: Resolve user ───
+    // Try to match by telegram_id first, then fall back to first admin
     const telegramId = String(message.from.id);
-    const { data: profile, error: profileErr } = await supabase
+    let userId: string;
+    let displayName: string | null = null;
+
+    const { data: profile } = await supabase
       .from("profiles")
       .select("user_id, display_name")
       .eq("telegram_id", telegramId)
-      .single();
+      .maybeSingle();
 
-    if (profileErr || !profile) {
-      await sendTelegram(chatId, "⛔ Acesso negado. Seu Telegram não está vinculado a nenhuma conta no sistema.", LOVABLE_API_KEY, TELEGRAM_API_KEY);
-      return jsonResponse({ ok: true, denied: true });
+    if (profile) {
+      userId = profile.user_id;
+      displayName = profile.display_name;
+    } else {
+      // Fall back to first admin user
+      const { data: adminRole } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "admin")
+        .limit(1)
+        .single();
+
+      if (!adminRole) {
+        await sendTelegram(chatId, "⛔ Nenhum administrador configurado no sistema.", LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true, denied: true });
+      }
+      userId = adminRole.user_id;
+      const { data: adminProfile } = await supabase.from("profiles").select("display_name").eq("user_id", userId).single();
+      displayName = adminProfile?.display_name || null;
     }
-
-    const userId = profile.user_id;
 
     // Get user role
     const { data: roleData } = await supabase
