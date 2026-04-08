@@ -10,27 +10,52 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Get all profiles with telegram_id
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("user_id, telegram_id, display_name")
-      .not("telegram_id", "is", null);
+    // Global bot: use TELEGRAM_CHAT_ID env or fall back to first admin's telegram_id
+    const globalChatId = Deno.env.get("TELEGRAM_CHAT_ID");
 
-    if (!profiles?.length) {
-      return new Response(JSON.stringify({ ok: true, notified: 0 }), {
+    // Get the admin user for queries
+    const { data: adminRole } = await supabase
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", "admin")
+      .limit(1)
+      .single();
+
+    if (!adminRole) {
+      return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no admin" }), {
         headers: { "Content-Type": "application/json" },
       });
     }
 
+    let chatId: number;
+    if (globalChatId) {
+      chatId = Number(globalChatId);
+    } else {
+      // Fall back to admin's telegram_id
+      const { data: adminProfile } = await supabase
+        .from("profiles")
+        .select("telegram_id")
+        .eq("user_id", adminRole.user_id)
+        .single();
+      if (!adminProfile?.telegram_id) {
+        return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no chat_id" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      chatId = Number(adminProfile.telegram_id);
+    }
+
+    const { data: adminProfile } = await supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("user_id", adminRole.user_id)
+      .single();
+
     let notified = 0;
+    const userId = adminRole.user_id;
     const today = new Date().toISOString().split("T")[0];
     const twoDaysFromNow = new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0];
     const startOfMonth = today.substring(0, 8) + "01";
-
-    for (const profile of profiles) {
-      const userId = profile.user_id;
-      const chatId = Number(profile.telegram_id);
-      if (!chatId) continue;
 
       const parts: string[] = [];
 
@@ -122,16 +147,8 @@ Deno.serve(async (req) => {
         parts.push(`\n_Responda com: "Valor [nome da conta] R$ XX,XX" para atualizar._\n`);
       }
 
-      // Mark telegram notifications as read
-      await supabase
-        .from("notificacoes")
-        .update({ lida_telegram: true })
-        .eq("user_id", userId)
-        .eq("lida_telegram", false);
-
-      if (parts.length === 0) continue;
-
-      const greeting = profile.display_name ? `Olá, ${profile.display_name}! 👋\n\n` : "👋\n\n";
+    if (parts.length > 0) {
+      const greeting = adminProfile?.display_name ? `Olá, ${adminProfile.display_name}! 👋\n\n` : "👋\n\n";
       const msg = greeting + parts.join("\n");
 
       await fetch(`${GATEWAY_URL}/sendMessage`, {

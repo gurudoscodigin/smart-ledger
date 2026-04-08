@@ -256,7 +256,7 @@ export default function ControlCenter() {
                     <div>
                       <p className="text-sm font-medium">{u.display_name || "Sem nome"}</p>
                       <p className="text-xs text-muted-foreground">
-                        {u.telegram_id ? `📱 ${u.telegram_id}` : "⚠️ Telegram não vinculado"}
+                        {u.role === "admin" ? "🤖 Bot Financeiro: Ativo" : `Função: ${u.role}`}
                       </p>
                     </div>
                   </div>
