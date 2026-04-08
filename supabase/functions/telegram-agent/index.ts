@@ -355,7 +355,7 @@ async function handleCommand(
       }
       const { data: forn } = await supabase
         .from("fornecedores")
-        .select("nome, chave_pix, tipo_chave, cnpj_cpf")
+        .select("nome, chave_pix, cnpj, notas")
         .eq("user_id", userId)
         .ilike("nome", `%${argStr}%`)
         .limit(3);
@@ -368,9 +368,8 @@ async function handleCommand(
       let msg = "";
       for (const f of forn) {
         msg += `🏢 *${f.nome}*\n`;
-        msg += `🔑 Chave PIX: \`${f.chave_pix}\`\n`;
-        if (f.tipo_chave) msg += `Tipo: ${f.tipo_chave}\n`;
-        if (f.cnpj_cpf) msg += `CNPJ/CPF: ${f.cnpj_cpf}\n`;
+        if (f.chave_pix) msg += `🔑 Chave PIX: \`${f.chave_pix}\`\n`;
+        if (f.cnpj) msg += `CNPJ: ${f.cnpj}\n`;
         msg += "\n";
       }
       await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
