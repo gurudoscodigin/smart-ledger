@@ -2,8 +2,10 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UserPlus, Shield, Clock, Copy, Lock, AlertTriangle } from "lucide-react";
+import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -14,11 +16,14 @@ import { toast } from "sonner";
 export default function ControlCenter() {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteRole, setInviteRole] = useState<string>("assistente");
-  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<string>("assistente");
+  const [showPassword, setShowPassword] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  // Fetch real users with profiles and roles
   const { data: users } = useQuery({
     queryKey: ["control-users"],
     queryFn: async () => {
@@ -26,11 +31,9 @@ export default function ControlCenter() {
         .from("profiles")
         .select("user_id, display_name, telegram_id");
       if (error) throw error;
-
       const { data: roles } = await supabase
         .from("user_roles")
         .select("user_id, role");
-
       return (profiles || []).map(p => ({
         ...p,
         role: roles?.find(r => r.user_id === p.user_id)?.role || "assistente",
@@ -39,7 +42,6 @@ export default function ControlCenter() {
     enabled: !!user && role === "admin",
   });
 
-  // Fetch real audit logs
   const { data: auditLogs } = useQuery({
     queryKey: ["audit-logs"],
     queryFn: async () => {
@@ -54,25 +56,33 @@ export default function ControlCenter() {
     enabled: !!user && role === "admin",
   });
 
-  // Generate invite
-  const generateInvite = useMutation({
-    mutationFn: async (inviteRole: string) => {
-      const { data, error } = await supabase
-        .from("convites")
-        .insert({ created_by: user!.id, role: inviteRole as any })
-        .select("token")
-        .single();
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: newEmail,
+        password: newPassword,
+        options: {
+          data: { display_name: newName, requested_role: newRole },
+          emailRedirectTo: window.location.origin,
+        },
+      });
       if (error) throw error;
-      return data.token;
-    },
-    onSuccess: (token) => {
-      setGeneratedToken(token);
-      toast.success("Convite gerado!");
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
+      toast.success("Usuário criado com sucesso! E-mail de confirmação enviado.");
+      setCreateOpen(false);
+      setNewName("");
+      setNewEmail("");
+      setNewPassword("");
+      setNewRole("assistente");
+      queryClient.invalidateQueries({ queryKey: ["control-users"] });
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao criar usuário");
+    } finally {
+      setCreating(false);
+    }
+  };
 
-  // Update user role
   const updateRole = useMutation({
     mutationFn: async ({ userId, newRole }: { userId: string; newRole: string }) => {
       const { error } = await supabase
@@ -93,11 +103,6 @@ export default function ControlCenter() {
     r === "supervisor" ? "bg-role-supervisor/20 text-foreground" :
     "bg-muted text-muted-foreground";
 
-  const inviteUrl = generatedToken
-    ? `${window.location.origin}/signup?token=${generatedToken}`
-    : null;
-
-  // Permission matrix
   const permissions = [
     { action: "Ver saldo total", admin: true, supervisor: true, assistente: false },
     { action: "Criar/editar transações", admin: true, supervisor: true, assistente: true },
@@ -180,46 +185,63 @@ export default function ControlCenter() {
         <Card className="glass-card">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base font-medium">Gestão de Usuários</CardTitle>
-            <Dialog open={inviteOpen} onOpenChange={(o) => { setInviteOpen(o); if (!o) setGeneratedToken(null); }}>
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-2">
-                  <UserPlus className="w-4 h-4" /> Gerar Convite
+                  <UserPlus className="w-4 h-4" /> Novo Usuário
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Convidar Novo Membro</DialogTitle>
+                  <DialogTitle>Criar Novo Usuário</DialogTitle>
                 </DialogHeader>
-                <div className="space-y-4 pt-4">
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Papel do convidado</label>
-                    <Select value={inviteRole} onValueChange={setInviteRole}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                <form onSubmit={handleCreateUser} className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label>Nome Completo</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input placeholder="Nome completo" value={newName} onChange={(e) => setNewName(e.target.value)} className="pl-10" required />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>E-mail</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input type="email" placeholder="email@exemplo.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="pl-10" required />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Senha</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input type={showPassword ? "text" : "password"} placeholder="Mínimo 8 caracteres" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="pl-10 pr-10" minLength={8} required />
+                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Função</Label>
+                    <Select value={newRole} onValueChange={setNewRole}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="supervisor">Supervisor</SelectItem>
                         <SelectItem value="assistente">Assistente</SelectItem>
                       </SelectContent>
                     </Select>
+                    {newRole === "admin" && (
+                      <p className="text-xs text-amber-500 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> Esse usuário terá acesso total ao sistema.
+                      </p>
+                    )}
                   </div>
-                  {inviteUrl ? (
-                    <div className="p-4 bg-accent rounded-lg">
-                      <p className="text-xs text-muted-foreground mb-2">Link de convite (expira em 24h)</p>
-                      <div className="flex items-center gap-2">
-                        <code className="text-xs bg-background px-3 py-2 rounded border flex-1 truncate">{inviteUrl}</code>
-                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(inviteUrl); toast.success("Link copiado!"); }}>
-                          <Copy className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Button onClick={() => generateInvite.mutate(inviteRole)} disabled={generateInvite.isPending} className="w-full">
-                      {generateInvite.isPending ? "Gerando..." : "Gerar Link de Convite"}
-                    </Button>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    O novo membro precisará vincular seu Telegram ID durante o primeiro acesso.
-                  </p>
-                </div>
+                  <Button type="submit" className="w-full" disabled={creating}>
+                    {creating ? "Criando..." : "Criar Usuário"}
+                  </Button>
+                </form>
               </DialogContent>
             </Dialog>
           </CardHeader>
