@@ -3,30 +3,74 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DollarSign, TrendingDown, TrendingUp, Clock, FileText, Plus, Check } from "lucide-react";
+import { DollarSign, TrendingDown, TrendingUp, Clock, FileText, Plus, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import { useDashboardSummary, useTransacoes } from "@/hooks/useTransacoes";
+import { useTransacoes } from "@/hooks/useTransacoes";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
+import { useBancos } from "@/hooks/useBancos";
 
 export default function CommandCenter() {
-  const { data: summary, isLoading: summaryLoading } = useDashboardSummary();
-  const { data: txData, isLoading: txLoading, payTransaction } = useTransacoes();
+  const now = new Date();
+  const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
+  const [viewYear, setViewYear] = useState(now.getFullYear());
   const [txDialogOpen, setTxDialogOpen] = useState(false);
 
-  const burnData = summary ? [
-    { name: "Pago", value: summary.totalPago, color: "hsl(153, 50%, 45%)" },
-    { name: "Pendente", value: summary.totalPendente, color: "hsl(217, 70%, 55%)" },
-    { name: "Atrasado", value: summary.totalAtrasado, color: "hsl(0, 65%, 55%)" },
-  ].filter(d => d.value > 0) : [];
+  const isCurrentMonth = viewMonth === now.getMonth() + 1 && viewYear === now.getFullYear();
+
+  const { data: txData, isLoading: txLoading, payTransaction } = useTransacoes({
+    month: viewMonth,
+    year: viewYear,
+  });
+
+  const { data: bancos } = useBancos();
+  const saldoTotal = (bancos || []).reduce((sum, b) => sum + Number(b.saldo_atual), 0);
+
+  // Compute summary from txData for the selected month
+  const currentMonthTxs = txData?.currentMonth || [];
+  const totalPago = currentMonthTxs.filter(t => t.status === "pago").reduce((s, t) => s + Number(t.valor), 0);
+  const totalPendente = currentMonthTxs.filter(t => t.status === "pendente").reduce((s, t) => s + Number(t.valor), 0);
+  const totalAtrasado = currentMonthTxs.filter(t => t.status === "atrasado").reduce((s, t) => s + Number(t.valor), 0);
+  const totalAPagar = totalPendente + totalAtrasado;
+
+  const burnData = [
+    { name: "Pago", value: totalPago, color: "hsl(153, 50%, 45%)" },
+    { name: "Pendente", value: totalPendente, color: "hsl(217, 70%, 55%)" },
+    { name: "Atrasado", value: totalAtrasado, color: "hsl(0, 65%, 55%)" },
+  ].filter(d => d.value > 0);
 
   const allTransactions = [
     ...(txData?.overdue || []).map(t => ({ ...t, _overdue: true })),
-    ...(txData?.currentMonth || []),
+    ...currentMonthTxs,
   ];
 
   const upcoming = allTransactions
     .filter(t => t.status !== "pago")
     .slice(0, 8);
+
+  const goToPrevMonth = () => {
+    if (viewMonth === 1) {
+      setViewMonth(12);
+      setViewYear(y => y - 1);
+    } else {
+      setViewMonth(m => m - 1);
+    }
+  };
+
+  const goToNextMonth = () => {
+    if (viewMonth === 12) {
+      setViewMonth(1);
+      setViewYear(y => y + 1);
+    } else {
+      setViewMonth(m => m + 1);
+    }
+  };
+
+  const goToCurrentMonth = () => {
+    setViewMonth(now.getMonth() + 1);
+    setViewYear(now.getFullYear());
+  };
+
+  const monthLabel = new Date(viewYear, viewMonth - 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
 
   return (
     <DashboardLayout>
@@ -41,15 +85,38 @@ export default function CommandCenter() {
           </Button>
         </div>
 
+        {/* Month Navigation */}
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="ghost" size="icon" onClick={goToPrevMonth}>
+            <ChevronLeft className="w-5 h-5" />
+          </Button>
+          <button
+            onClick={goToCurrentMonth}
+            className="text-lg font-semibold capitalize min-w-[200px] text-center hover:text-primary transition-colors"
+          >
+            {monthLabel}
+          </button>
+          <Button variant="ghost" size="icon" onClick={goToNextMonth}>
+            <ChevronRight className="w-5 h-5" />
+          </Button>
+          {!isCurrentMonth && (
+            <Button variant="outline" size="sm" className="text-xs ml-2" onClick={goToCurrentMonth}>
+              Hoje
+            </Button>
+          )}
+        </div>
+
         {/* Top Widgets */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="glass-card">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Saldo em Conta</p>
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
+                    {isCurrentMonth ? "Saldo em Conta" : "Saldo Atual"}
+                  </p>
                   <p className="text-2xl font-semibold mt-1">
-                    {summaryLoading ? "..." : `R$ ${(summary?.saldoTotal ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                    R$ {saldoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-status-paid/10 flex items-center justify-center">
@@ -65,7 +132,7 @@ export default function CommandCenter() {
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Total a Pagar</p>
                   <p className="text-2xl font-semibold mt-1">
-                    {summaryLoading ? "..." : `R$ ${(summary?.totalAPagar ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                    R$ {totalAPagar.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-status-late/10 flex items-center justify-center">
@@ -81,7 +148,7 @@ export default function CommandCenter() {
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Total Pago</p>
                   <p className="text-2xl font-semibold mt-1">
-                    {summaryLoading ? "..." : `R$ ${(summary?.totalPago ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                    R$ {totalPago.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -96,12 +163,16 @@ export default function CommandCenter() {
           {/* Burn Rate Chart */}
           <Card className="glass-card lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-base font-medium">
-                Burn Rate — {new Date().toLocaleString("pt-BR", { month: "long", year: "numeric" })}
+              <CardTitle className="text-base font-medium capitalize">
+                Burn Rate — {monthLabel}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {burnData.length > 0 ? (
+              {txLoading ? (
+                <div className="flex items-center justify-center h-52">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : burnData.length > 0 ? (
                 <div className="flex items-center justify-center gap-8">
                   <div className="w-52 h-52">
                     <ResponsiveContainer width="100%" height="100%">
@@ -121,11 +192,19 @@ export default function CommandCenter() {
                         <span className="text-sm font-medium ml-auto">R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
                       </div>
                     ))}
+                    <div className="pt-2 border-t border-border/30">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-muted-foreground">Total</span>
+                        <span className="text-sm font-semibold ml-auto">
+                          R$ {(totalPago + totalPendente + totalAtrasado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-52 text-muted-foreground text-sm">
-                  Nenhuma transação este mês
+                  Nenhuma transação neste mês
                 </div>
               )}
             </CardContent>
@@ -156,7 +235,7 @@ export default function CommandCenter() {
                   </div>
                 ))}
                 {allTransactions.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">Sem atividades recentes</p>
+                  <p className="text-sm text-muted-foreground text-center py-4">Sem atividades neste mês</p>
                 )}
               </div>
             </CardContent>
@@ -166,11 +245,15 @@ export default function CommandCenter() {
         {/* Upcoming / Overdue */}
         <Card className="glass-card">
           <CardHeader>
-            <CardTitle className="text-base font-medium">Próximos Vencimentos & Atrasados</CardTitle>
+            <CardTitle className="text-base font-medium">
+              {isCurrentMonth ? "Próximos Vencimentos & Atrasados" : "Contas do Mês"}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {upcoming.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">Nenhuma conta pendente 🎉</p>
+              <p className="text-sm text-muted-foreground text-center py-6">
+                {isCurrentMonth ? "Nenhuma conta pendente 🎉" : "Todas as contas estão pagas neste mês 🎉"}
+              </p>
             ) : (
               <div className="space-y-1">
                 {upcoming.map((tx: any) => (
@@ -194,7 +277,7 @@ export default function CommandCenter() {
                         variant="outline"
                         className="h-7 text-xs gap-1"
                         onClick={() => payTransaction.mutate(tx.id)}
-                        disabled={payTransaction.isPending}
+                        disabled={payTransaction.isPending || tx.status === "pago"}
                       >
                         <Check className="w-3 h-3" /> Pagar
                       </Button>
