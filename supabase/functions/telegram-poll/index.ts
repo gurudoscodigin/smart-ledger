@@ -1,43 +1,30 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
-const MAX_RUNTIME_MS = 55_000;
-const MIN_REMAINING_MS = 5_000;
 
-Deno.serve(async (req) => {
-  const startTime = Date.now();
+Deno.serve(async (_req) => {
+  try {
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) return errorResponse("LOVABLE_API_KEY not configured");
 
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) return errorResponse("LOVABLE_API_KEY not configured");
+    const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
+    if (!TELEGRAM_API_KEY) return errorResponse("TELEGRAM_API_KEY not configured");
 
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
-  if (!TELEGRAM_API_KEY) return errorResponse("TELEGRAM_API_KEY not configured");
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, serviceKey);
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const supabase = createClient(supabaseUrl, serviceKey);
+    // Read current offset
+    const { data: state, error: stateErr } = await supabase
+      .from("telegram_bot_state")
+      .select("update_offset")
+      .eq("id", 1)
+      .single();
 
-  let totalProcessed = 0;
-  let currentOffset: number;
+    if (stateErr) return errorResponse(stateErr.message);
+    const currentOffset = state.update_offset;
 
-  // Read initial offset
-  const { data: state, error: stateErr } = await supabase
-    .from("telegram_bot_state")
-    .select("update_offset")
-    .eq("id", 1)
-    .single();
-
-  if (stateErr) return errorResponse(stateErr.message);
-  currentOffset = state.update_offset;
-
-  while (true) {
-    const elapsed = Date.now() - startTime;
-    const remainingMs = MAX_RUNTIME_MS - elapsed;
-    if (remainingMs < MIN_REMAINING_MS) break;
-
-    const timeout = Math.min(50, Math.floor(remainingMs / 1000) - 5);
-    if (timeout < 1) break;
-
+    // Single short-poll request (no long polling)
     const response = await fetch(`${GATEWAY_URL}/getUpdates`, {
       method: "POST",
       headers: {
@@ -47,7 +34,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         offset: currentOffset,
-        timeout,
+        timeout: 0,
         allowed_updates: ["message"],
       }),
     });
@@ -56,7 +43,11 @@ Deno.serve(async (req) => {
     if (!response.ok) return errorResponse(JSON.stringify(data), 502);
 
     const updates = data.result ?? [];
-    if (updates.length === 0) continue;
+    if (updates.length === 0) {
+      return new Response(JSON.stringify({ ok: true, processed: 0 }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     // Store messages
     const rows = updates
@@ -69,44 +60,45 @@ Deno.serve(async (req) => {
       }));
 
     if (rows.length > 0) {
-      const { error: insertErr } = await supabase
+      await supabase
         .from("telegram_messages")
         .upsert(rows, { onConflict: "update_id" });
-      if (insertErr) return errorResponse(insertErr.message);
-      totalProcessed += rows.length;
     }
 
     // Advance offset
     const newOffset = Math.max(...updates.map((u: any) => u.update_id)) + 1;
-    const { error: offsetErr } = await supabase
+    await supabase
       .from("telegram_bot_state")
       .update({ update_offset: newOffset, updated_at: new Date().toISOString() })
       .eq("id", 1);
-    if (offsetErr) return errorResponse(offsetErr.message);
-    currentOffset = newOffset;
 
     // Process each update through the agent
     for (const update of updates) {
       if (!update.message) continue;
       try {
-        await fetch(`${supabaseUrl}/functions/v1/telegram-agent`, {
+        const agentResp = await fetch(`${supabaseUrl}/functions/v1/telegram-agent`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${serviceKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ update: update }),
+          body: JSON.stringify({ update }),
         });
+        const agentResult = await agentResp.text();
+        console.log(`Agent response for update ${update.update_id}:`, agentResult);
       } catch (e) {
         console.error("Error calling telegram-agent:", e);
       }
     }
-  }
 
-  return new Response(
-    JSON.stringify({ ok: true, processed: totalProcessed, finalOffset: currentOffset }),
-    { headers: { "Content-Type": "application/json" } }
-  );
+    return new Response(
+      JSON.stringify({ ok: true, processed: updates.length, newOffset }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+  } catch (err: any) {
+    console.error("Poll error:", err);
+    return errorResponse(err.message);
+  }
 });
 
 function errorResponse(msg: string, status = 500) {
