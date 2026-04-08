@@ -21,11 +21,34 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
   const [tab, setTab] = useState("avulsa");
 
   // Simple transaction form
-  const [simple, setSimple] = useState({ descricao: "", valor: 0, data_vencimento: "", categoria_tipo: "avulsa" as any, banco_id: "", origem: "" as any });
+  const [simple, setSimple] = useState({
+    descricao: "", valor: 0, data_vencimento: "",
+    categoria_tipo: "avulsa" as any,
+    origem: "",           // where the bill comes from
+    forma_pagamento: "",  // how you pay
+    banco_id: "",
+    cartao_id: "",
+  });
+
   // Installment form
   const [inst, setInst] = useState({ descricao: "", valorTotal: 0, parcelas: 2, cartaoId: "", diaCobranca: 10 });
   // PIX form
   const [pix, setPix] = useState({ descricao: "", valor: 0, bancoId: "" });
+
+  const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
+  const needsCard = simple.forma_pagamento === "cartao";
+  const simpleCanSubmit = !createTransaction.isPending
+    && (!needsBank || simple.banco_id)
+    && (!needsCard || simple.cartao_id);
+
+  const setFormaPagamento = (v: string) => {
+    setSimple(s => ({
+      ...s,
+      forma_pagamento: v,
+      cartao_id: v === "cartao" ? s.cartao_id : "",
+      banco_id: v === "cartao" ? "" : s.banco_id,
+    }));
+  };
 
   const handleSimple = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,7 +58,8 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
       data_vencimento: simple.data_vencimento,
       categoria_tipo: simple.categoria_tipo,
       banco_id: simple.banco_id || null,
-      origem: (simple.origem as any) || null,
+      cartao_id: simple.cartao_id || null,
+      origem: (simple.forma_pagamento as any) || null,
       status: "pendente",
     });
     onOpenChange(false);
@@ -66,7 +90,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nova Transação</DialogTitle>
         </DialogHeader>
@@ -74,7 +98,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
           <TabsList className="w-full">
             <TabsTrigger value="avulsa" className="flex-1">Avulsa</TabsTrigger>
             <TabsTrigger value="parcelamento" className="flex-1">Parcelamento</TabsTrigger>
-            <TabsTrigger value="pix" className="flex-1">PIX</TabsTrigger>
+            <TabsTrigger value="pix" className="flex-1">PIX Rápido</TabsTrigger>
           </TabsList>
 
           <TabsContent value="avulsa">
@@ -94,25 +118,37 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Origem</Label>
+
+              <div><Label>Origem da conta</Label>
                 <Select value={simple.origem} onValueChange={v => setSimple(s => ({ ...s, origem: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="De onde veio essa conta?" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="boleto">Boleto</SelectItem>
-                    <SelectItem value="pix">PIX</SelectItem>
                     <SelectItem value="email">E-mail</SelectItem>
-                    <SelectItem value="site">Site</SelectItem>
-                    <SelectItem value="debito_automatico">Déb. Automático</SelectItem>
-                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                    <SelectItem value="site">Site / App</SelectItem>
+                    <SelectItem value="boleto_correio">Boleto (correio)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground mt-1">Onde você recebeu ou consultou essa conta</p>
+              </div>
+
+              <div><Label>Forma de pagamento</Label>
+                <Select value={simple.forma_pagamento} onValueChange={setFormaPagamento}>
+                  <SelectTrigger><SelectValue placeholder="Como vai pagar?" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pix">PIX</SelectItem>
                     <SelectItem value="cartao">Cartão</SelectItem>
+                    <SelectItem value="boleto">Boleto</SelectItem>
+                    <SelectItem value="debito_automatico">Débito Automático</SelectItem>
+                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              {/* Banco obrigatório para PIX e Dinheiro */}
-              {(simple.origem === "pix" || simple.origem === "dinheiro") && (
+
+              {/* PIX / Dinheiro → banco obrigatório */}
+              {needsBank && (
                 <div>
                   <Label className="flex items-center gap-1">
-                    Banco de Origem <span className="text-destructive">*</span>
+                    Banco de origem <span className="text-destructive">*</span>
                   </Label>
                   <Select value={simple.banco_id} onValueChange={v => setSimple(s => ({ ...s, banco_id: v }))}>
                     <SelectTrigger><SelectValue placeholder="De qual banco saiu?" /></SelectTrigger>
@@ -125,11 +161,41 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                   <p className="text-[10px] text-muted-foreground mt-1">Obrigatório para manter o saldo sincronizado</p>
                 </div>
               )}
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={createTransaction.isPending || ((simple.origem === "pix" || simple.origem === "dinheiro") && !simple.banco_id)}
-              >
+
+              {/* Cartão → selecionar cartão */}
+              {needsCard && (
+                <div>
+                  <Label className="flex items-center gap-1">
+                    Cartão <span className="text-destructive">*</span>
+                  </Label>
+                  <Select value={simple.cartao_id} onValueChange={v => setSimple(s => ({ ...s, cartao_id: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Qual cartão?" /></SelectTrigger>
+                    <SelectContent>
+                      {(cartoes || []).map(c => (
+                        <SelectItem key={c.id} value={c.id}>{c.apelido} (•••• {c.final_cartao})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground mt-1">O banco já está vinculado ao cartão</p>
+                </div>
+              )}
+
+              {/* Débito automático → banco */}
+              {simple.forma_pagamento === "debito_automatico" && (
+                <div>
+                  <Label>Banco do débito automático</Label>
+                  <Select value={simple.banco_id} onValueChange={v => setSimple(s => ({ ...s, banco_id: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Qual banco?" /></SelectTrigger>
+                    <SelectContent>
+                      {(bancos || []).map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <Button type="submit" className="w-full" disabled={!simpleCanSubmit}>
                 Registrar
               </Button>
             </form>
