@@ -25,12 +25,12 @@ const categoriaBadge = (tipo: string) => {
 };
 
 const metodoBadge = (origem: string | null, tipoFuncao?: string) => {
-  if (origem === "pix") return <Badge variant="secondary" className="text-[10px] bg-green-500/10 text-green-600">PIX</Badge>;
-  if (origem === "cartao" || origen === "debito_automatico") {
-    if (tipoFuncao === "debito") return <Badge variant="secondary" className="text-[10px] bg-blue-500/10 text-blue-600">Débito</Badge>;
-    return <Badge variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-600">Crédito</Badge>;
+  if (origem === "pix") return <Badge variant="secondary" className="text-[10px] bg-status-paid/10 text-status-paid">PIX</Badge>;
+  if (origem === "cartao" || origem === "debito_automatico") {
+    if (tipoFuncao === "debito") return <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary">Débito</Badge>;
+    return <Badge variant="secondary" className="text-[10px] bg-secondary text-secondary-foreground">Crédito</Badge>;
   }
-  if (origen === "boleto") return <Badge variant="secondary" className="text-[10px] bg-orange-500/10 text-orange-600">Boleto</Badge>;
+  if (origem === "boleto") return <Badge variant="secondary" className="text-[10px] bg-status-pending/10 text-status-pending">Boleto</Badge>;
   return null;
 };
 
