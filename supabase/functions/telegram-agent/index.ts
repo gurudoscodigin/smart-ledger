@@ -1208,39 +1208,23 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
 
     const audioBytes = await downloadResp.arrayBuffer();
 
-    // Use AI to transcribe (send as base64 in prompt)
-    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBytes)));
+    // Use OpenAI Whisper API for transcription
+    const formData = new FormData();
+    formData.append("file", new Blob([audioBytes], { type: "audio/ogg" }), "audio.ogg");
+    formData.append("model", "whisper-1");
+    formData.append("language", "pt");
 
-    const response = await fetch(AI_GATEWAY, {
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openaiKey}`,
-        "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages: [
-          {
-            role: "system",
-            content: "Transcreva o áudio em texto. Retorne APENAS a transcrição, sem comentários.",
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Transcreva este áudio:" },
-              {
-                type: "input_audio",
-                input_audio: { data: base64Audio, format: "ogg" },
-              },
-            ],
-          },
-        ],
-      }),
+      body: formData,
     });
 
     if (!response.ok) return null;
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || null;
+    return data.text || null;
   } catch (e) {
     console.error("Transcription error:", e);
     return null;
