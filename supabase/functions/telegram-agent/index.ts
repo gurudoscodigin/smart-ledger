@@ -51,8 +51,22 @@ Deno.serve(async (req) => {
 
     // ─── COMMAND ROUTING ───
     if (text.startsWith("/")) {
+      // Clear pending context on command
+      await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
       return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
     }
+
+    // ─── CHECK PENDING CONVERSATION CONTEXT ───
+    const { data: pendingMsg } = await supabase
+      .from("telegram_messages")
+      .select("pending_context")
+      .eq("chat_id", chatId)
+      .not("pending_context", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    const pendingContext = pendingMsg?.pending_context as any | null;
 
     // ─── VOICE MESSAGE → Transcription via AI ───
     let processedText = text;
@@ -120,19 +134,58 @@ Deno.serve(async (req) => {
     }
 
     // ─── NLP: Extract transaction data via AI ───
-    const extraction = await extractTransactionData(processedText, userId, supabase, OPENAI_KEY);
+    // If there's pending context, merge previous partial data with new answer
+    let enrichedText = processedText;
+    if (pendingContext) {
+      enrichedText = `Contexto anterior: Descrição="${pendingContext.descricao || ""}", Valor=${pendingContext.valor || "?"}, Data=${pendingContext.data_vencimento || "?"}, Categoria=${pendingContext.categoria_tipo || "?"}, Origem=${pendingContext.origem || "?"}, Cartão=${pendingContext.cartao_ref || "?"}, Banco=${pendingContext.banco_ref || "?"}, Status=${pendingContext.status_pagamento || "pendente"}. Pergunta feita: "${pendingContext.missing_question || ""}". Resposta do usuário: "${processedText}". Combine tudo e complete os dados.`;
+      // Clear pending context
+      await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+    }
+
+    const extraction = await extractTransactionData(enrichedText, userId, supabase, OPENAI_KEY);
 
     if (!extraction || extraction.status === "not_financial") {
-      // It's a general query — handle as ad-hoc BI question
-      const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
-      await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
-      return jsonResponse({ ok: true });
+      if (pendingContext) {
+        // Retry: treat the original context + answer as a direct re-extraction
+        const fallbackExtraction = await extractTransactionData(
+          `${pendingContext.descricao || ""}, ${pendingContext.valor || ""} reais, vence ${pendingContext.data_vencimento || processedText}`,
+          userId, supabase, OPENAI_KEY
+        );
+        if (fallbackExtraction && fallbackExtraction.status === "complete") {
+          // Use fallback and continue to create transaction (handled below via goto-like pattern)
+          Object.assign(extraction || {}, fallbackExtraction);
+        }
+      }
+      if (!extraction || extraction.status === "not_financial") {
+        const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
+        await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true });
+      }
     }
 
     if (extraction.status === "incomplete") {
+      // Store pending context in the current message row
+      const contextToStore = {
+        descricao: extraction.descricao || pendingContext?.descricao || null,
+        valor: extraction.valor || pendingContext?.valor || null,
+        data_vencimento: extraction.data_vencimento || pendingContext?.data_vencimento || null,
+        categoria_tipo: extraction.categoria_tipo || pendingContext?.categoria_tipo || null,
+        origem: extraction.origem || pendingContext?.origem || null,
+        cartao_ref: extraction.cartao_ref || pendingContext?.cartao_ref || null,
+        banco_ref: extraction.banco_ref || pendingContext?.banco_ref || null,
+        categoria_ref: extraction.categoria_ref || pendingContext?.categoria_ref || null,
+        status_pagamento: extraction.status_pagamento || pendingContext?.status_pagamento || null,
+        missing_question: extraction.missing_question,
+      };
+
+      await supabase
+        .from("telegram_messages")
+        .update({ pending_context: contextToStore })
+        .eq("update_id", update.update_id);
+
       await sendTelegram(
         chatId,
-        `📝 Entendi parcialmente:\n• Descrição: ${extraction.descricao || "?"}\n• Valor: ${extraction.valor ? `R$ ${extraction.valor}` : "?"}\n• Data: ${extraction.data_vencimento || "?"}\n\n❓ ${extraction.missing_question}`,
+        `📝 Entendi parcialmente:\n• Descrição: ${contextToStore.descricao || "?"}\n• Valor: ${contextToStore.valor ? `R$ ${contextToStore.valor}` : "?"}\n• Data: ${contextToStore.data_vencimento || "?"}\n\n❓ ${extraction.missing_question}`,
         LOVABLE_API_KEY,
         TELEGRAM_API_KEY
       );
