@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, FileCheck, Settings, LogOut, Lock, Trash2, Receipt } from "lucide-react";
+import { LayoutDashboard, CreditCard, Settings, LogOut, Lock, Trash2, Receipt, BarChart3 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,7 +19,7 @@ const items = [
   { title: "Command Center", url: "/", icon: LayoutDashboard },
   { title: "Contas", url: "/bills", icon: Receipt },
   { title: "Card Vault", url: "/cards", icon: CreditCard },
-  { title: "Auditor", url: "/auditor", icon: FileCheck },
+  { title: "Relatórios", url: "/reports", icon: BarChart3 },
   { title: "Control Center", url: "/settings", icon: Settings },
 ];
 
@@ -35,7 +35,6 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
       <SidebarContent className="pt-6">
-        {/* Logo */}
         {!collapsed && (
           <div className="px-4 mb-6 flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -67,7 +66,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Trash link - subtle, at bottom of nav */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>

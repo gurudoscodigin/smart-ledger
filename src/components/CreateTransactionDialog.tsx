@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
+import { CurrencyInput } from "@/components/CurrencyInput";
+import { NumericInput } from "@/components/NumericInput";
 
 interface Props {
   open: boolean;
@@ -20,20 +22,17 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
   const { data: bancos } = useBancos();
   const [tab, setTab] = useState("avulsa");
 
-  // Simple transaction form
   const [simple, setSimple] = useState({
-    descricao: "", valor: 0, data_vencimento: "",
+    descricao: "", valor: "", data_vencimento: "",
     categoria_tipo: "avulsa" as any,
-    origem: "",           // where the bill comes from
-    forma_pagamento: "",  // how you pay
+    origem: "",
+    forma_pagamento: "",
     banco_id: "",
     cartao_id: "",
   });
 
-  // Installment form
-  const [inst, setInst] = useState({ descricao: "", valorTotal: 0, parcelas: 2, cartaoId: "", diaCobranca: 10 });
-  // PIX form
-  const [pix, setPix] = useState({ descricao: "", valor: 0, bancoId: "" });
+  const [inst, setInst] = useState({ descricao: "", valorTotal: "", parcelas: "2", cartaoId: "", diaCobranca: "10" });
+  const [pix, setPix] = useState({ descricao: "", valor: "", bancoId: "" });
 
   const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
   const needsCard = simple.forma_pagamento === "cartao";
@@ -54,7 +53,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
     e.preventDefault();
     await createTransaction.mutateAsync({
       descricao: simple.descricao,
-      valor: simple.valor,
+      valor: Number(simple.valor),
       data_vencimento: simple.data_vencimento || new Date().toISOString().split("T")[0],
       categoria_tipo: simple.categoria_tipo,
       banco_id: simple.banco_id || null,
@@ -69,11 +68,11 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
     e.preventDefault();
     await createInstallments.mutateAsync({
       descricao: inst.descricao,
-      valorTotal: inst.valorTotal,
-      parcelas: inst.parcelas,
+      valorTotal: Number(inst.valorTotal),
+      parcelas: Number(inst.parcelas),
       cartaoId: inst.cartaoId,
       categoriaTipo: "divida",
-      diaCobranca: inst.diaCobranca,
+      diaCobranca: Number(inst.diaCobranca),
     });
     onOpenChange(false);
   };
@@ -82,7 +81,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
     e.preventDefault();
     await createPixPayment.mutateAsync({
       descricao: pix.descricao,
-      valor: pix.valor,
+      valor: Number(pix.valor),
       bancoId: pix.bancoId,
     });
     onOpenChange(false);
@@ -105,7 +104,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
             <form onSubmit={handleSimple} className="space-y-3 pt-2">
               <div><Label>Descrição</Label><Input placeholder="Ex: Multa de trânsito" value={simple.descricao} onChange={e => setSimple(s => ({ ...s, descricao: e.target.value }))} required /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><Label>Valor (R$)</Label><Input type="number" min={0} step={0.01} value={simple.valor || ""} onChange={e => setSimple(s => ({ ...s, valor: Number(e.target.value) }))} required /></div>
+                <div><Label>Valor (R$)</Label><CurrencyInput value={simple.valor} onValueChange={v => setSimple(s => ({ ...s, valor: v }))} required /></div>
                 <div><Label>Vencimento</Label><Input type="date" value={simple.data_vencimento} onChange={e => setSimple(s => ({ ...s, data_vencimento: e.target.value }))} /></div>
               </div>
               <div><Label>Tipo</Label>
@@ -144,12 +143,9 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                 </Select>
               </div>
 
-              {/* PIX / Dinheiro → banco obrigatório */}
               {needsBank && (
                 <div>
-                  <Label className="flex items-center gap-1">
-                    Banco de origem <span className="text-destructive">*</span>
-                  </Label>
+                  <Label className="flex items-center gap-1">Banco de origem <span className="text-destructive">*</span></Label>
                   <Select value={simple.banco_id} onValueChange={v => setSimple(s => ({ ...s, banco_id: v }))}>
                     <SelectTrigger><SelectValue placeholder="De qual banco saiu?" /></SelectTrigger>
                     <SelectContent>
@@ -158,16 +154,12 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-[10px] text-muted-foreground mt-1">Obrigatório para manter o saldo sincronizado</p>
                 </div>
               )}
 
-              {/* Cartão → selecionar cartão */}
               {needsCard && (
                 <div>
-                  <Label className="flex items-center gap-1">
-                    Cartão <span className="text-destructive">*</span>
-                  </Label>
+                  <Label className="flex items-center gap-1">Cartão <span className="text-destructive">*</span></Label>
                   <Select value={simple.cartao_id} onValueChange={v => setSimple(s => ({ ...s, cartao_id: v }))}>
                     <SelectTrigger><SelectValue placeholder="Qual cartão?" /></SelectTrigger>
                     <SelectContent>
@@ -176,11 +168,9 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-[10px] text-muted-foreground mt-1">O banco já está vinculado ao cartão</p>
                 </div>
               )}
 
-              {/* Débito automático → banco */}
               {simple.forma_pagamento === "debito_automatico" && (
                 <div>
                   <Label>Banco do débito automático</Label>
@@ -195,9 +185,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                 </div>
               )}
 
-              <Button type="submit" className="w-full" disabled={!simpleCanSubmit}>
-                Registrar
-              </Button>
+              <Button type="submit" className="w-full" disabled={!simpleCanSubmit}>Registrar</Button>
             </form>
           </TabsContent>
 
@@ -205,8 +193,8 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
             <form onSubmit={handleInstallment} className="space-y-3 pt-2">
               <div><Label>Descrição</Label><Input placeholder="Ex: iPhone 16" value={inst.descricao} onChange={e => setInst(s => ({ ...s, descricao: e.target.value }))} required /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><Label>Valor Total (R$)</Label><Input type="number" min={0} step={0.01} value={inst.valorTotal || ""} onChange={e => setInst(s => ({ ...s, valorTotal: Number(e.target.value) }))} required /></div>
-                <div><Label>Parcelas</Label><Input type="number" min={2} max={48} value={inst.parcelas} onChange={e => setInst(s => ({ ...s, parcelas: Number(e.target.value) }))} required /></div>
+                <div><Label>Valor Total (R$)</Label><CurrencyInput value={inst.valorTotal} onValueChange={v => setInst(s => ({ ...s, valorTotal: v }))} required /></div>
+                <div><Label>Parcelas</Label><NumericInput value={inst.parcelas} onValueChange={v => setInst(s => ({ ...s, parcelas: v }))} placeholder="2" required /></div>
               </div>
               <div><Label>Cartão</Label>
                 <Select value={inst.cartaoId} onValueChange={v => setInst(s => ({ ...s, cartaoId: v }))}>
@@ -218,7 +206,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Dia da cobrança</Label><Input type="number" min={1} max={31} value={inst.diaCobranca} onChange={e => setInst(s => ({ ...s, diaCobranca: Number(e.target.value) }))} /></div>
+              <div><Label>Dia da cobrança</Label><NumericInput value={inst.diaCobranca} onValueChange={v => setInst(s => ({ ...s, diaCobranca: v }))} placeholder="10" /></div>
               <Button type="submit" className="w-full" disabled={createInstallments.isPending}>Registrar Parcelamento</Button>
             </form>
           </TabsContent>
@@ -226,7 +214,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
           <TabsContent value="pix">
             <form onSubmit={handlePix} className="space-y-3 pt-2">
               <div><Label>Descrição</Label><Input placeholder="Ex: Multa R$ 130" value={pix.descricao} onChange={e => setPix(s => ({ ...s, descricao: e.target.value }))} required /></div>
-              <div><Label>Valor (R$)</Label><Input type="number" min={0} step={0.01} value={pix.valor || ""} onChange={e => setPix(s => ({ ...s, valor: Number(e.target.value) }))} required /></div>
+              <div><Label>Valor (R$)</Label><CurrencyInput value={pix.valor} onValueChange={v => setPix(s => ({ ...s, valor: v }))} required /></div>
               <div><Label>Banco de Origem</Label>
                 <Select value={pix.bancoId} onValueChange={v => setPix(s => ({ ...s, bancoId: v }))}>
                   <SelectTrigger><SelectValue placeholder="De qual banco saiu?" /></SelectTrigger>

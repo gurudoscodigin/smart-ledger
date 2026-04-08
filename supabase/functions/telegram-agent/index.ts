@@ -129,6 +129,23 @@ Deno.serve(async (req) => {
 
       // If only a file (no text), try to match with pending transactions
       if (!processedText && fileUrl) {
+        // Check if there's pending context to link the file to the correct transaction
+        if (pendingContext && pendingContext.last_transaction_id) {
+          // Link to the specific transaction from pending context
+          await supabase.from("comprovantes").insert({
+            transacao_id: pendingContext.last_transaction_id,
+            file_path: fileUrl,
+            file_name: fileName!,
+            file_type: message.document?.mime_type || "image/jpeg",
+            uploaded_by: userId,
+          });
+          await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+          
+          const { data: linkedTx } = await supabase.from("transacoes").select("descricao, valor, data_vencimento").eq("id", pendingContext.last_transaction_id).single();
+          const dtStr = linkedTx ? (() => { const [y,m,d] = linkedTx.data_vencimento.split("-"); return `${d}/${m}/${y}`; })() : "";
+          await sendTelegram(chatId, `📎 Comprovante vinculado à conta:\n${linkedTx?.descricao || "?"} - R$ ${Number(linkedTx?.valor || 0).toFixed(2)} (${dtStr})`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true });
+        }
         return await handleOrphanFile(chatId, userId, fileUrl, fileName!, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
       }
     }
@@ -211,12 +228,15 @@ Deno.serve(async (req) => {
     if (extraction.cartao_ref) {
       const { data: cartao } = await supabase
         .from("cartoes")
-        .select("id")
+        .select("id, tipo_funcao")
         .eq("user_id", userId)
         .or(`apelido.ilike.%${extraction.cartao_ref}%,final_cartao.eq.${extraction.cartao_ref}`)
         .limit(1)
         .single();
-      if (cartao) txData.cartao_id = cartao.id;
+      if (cartao) {
+        txData.cartao_id = cartao.id;
+        // If card is multiplo and user didn't specify debit/credit, it's already handled by origin
+      }
     }
 
     // Match bank
@@ -254,6 +274,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, error: txErr.message });
     }
 
+    // Store last transaction ID in pending context for receipt linking
+    await supabase
+      .from("telegram_messages")
+      .update({ pending_context: { last_transaction_id: newTx.id } })
+      .eq("update_id", update.update_id);
+
     // Link file if present
     if (fileUrl && newTx) {
       await supabase.from("comprovantes").insert({
@@ -281,11 +307,17 @@ Deno.serve(async (req) => {
     }
 
     // Build response
+    const fmtDate = (d: string) => {
+      const [y, m, dd] = d.split("-");
+      return `${dd}/${m}/${y}`;
+    };
     let response = `✅ Lançamento registrado!\n\n`;
     response += `📝 ${extraction.descricao}\n`;
     response += `💰 R$ ${Number(extraction.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
-    response += `📅 ${extraction.data_vencimento || "Hoje"}\n`;
+    response += `📅 ${extraction.data_vencimento ? fmtDate(extraction.data_vencimento) : "Hoje"}\n`;
     response += `📊 Status: ${txData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
+    if (extraction.origem) response += `\n💳 Forma: ${extraction.origem}`;
+    if (extraction.categoria_ref) response += `\n🏷️ Categoria: ${extraction.categoria_ref}`;
 
     if (!fileUrl) {
       response += `\n\n⚠️ Comprovante não detectado. Envie a foto/PDF agora ou marcarei como pendente.`;
@@ -1063,14 +1095,19 @@ async function extractTransactionData(text: string, userId: string, supabase: an
           content: `Você é um extrator de dados financeiros. Analise a mensagem do usuário e extraia informações de transações financeiras.
 REGRAS RÍGIDAS:
 - Se NÃO for sobre finanças, retorne status "not_financial"
-- Se faltar valor, data ou descrição, retorne status "incomplete" com missing_question
-- Só retorne status "complete" quando tiver pelo menos descrição e valor
-- Datas relativas: "hoje" = ${today}, "ontem" = calcule
+- Para retornar "complete" é OBRIGATÓRIO ter: descrição, valor, forma de pagamento (origem) e categoria
+- Se faltar valor, descrição, forma de pagamento ou categoria, retorne status "incomplete" com missing_question perguntando o que falta
+- Se a forma de pagamento for "cartao", OBRIGATORIAMENTE pergunte os 4 últimos dígitos do cartão (cartao_ref) se não informado
+- Se a forma de pagamento for "pix" ou "dinheiro", OBRIGATORIAMENTE pergunte o banco de origem (banco_ref) se não informado
+- TODAS as datas devem ser retornadas no formato YYYY-MM-DD
+- Datas relativas: "hoje" = ${today}, "ontem" = calcule, "dia 15" = dia 15 do mês atual
+- Interprete datas brasileiras: "15/04/2026" = 2026-04-15, "dia 10" = ${today.substring(0, 8)}10
 - Valores: interprete "150", "R$ 150", "cento e cinquenta" como 150.00
 - Se mencionar PIX, defina origem como "pix"
 - Se mencionar cartão, extraia a referência (nome ou últimos 4 dígitos)
 - Se disser "já paguei" ou "paguei", status_pagamento = "pago"
-- categoria_tipo: fixa (recorrente), avulsa (única), variavel (dia-a-dia), divida (parcelamento)`,
+- categoria_tipo: fixa (recorrente), avulsa (única), variavel (dia-a-dia), divida (parcelamento)
+- Sempre pergunte a categoria da compra se não informada (ex: Software, Escritório, Marketing, etc.)`,
         },
         { role: "user", content: text },
       ],

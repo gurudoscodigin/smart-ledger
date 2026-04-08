@@ -175,6 +175,21 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
   });
 
   // Pay transaction — releases card limit if card-linked
+  const updateTransaction = useMutation({
+    mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; status?: "pendente" | "pago" | "atrasado" | "cancelado"; categoria_tipo?: "fixa" | "avulsa" | "variavel" | "divida"; origem?: "email" | "site" | "pix" | "boleto" | "debito_automatico" | "dinheiro" | "cartao" | null; banco_id?: string | null; cartao_id?: string | null }) => {
+      const { error } = await supabase
+        .from("transacoes")
+        .update(updates)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      toast.success("Transação atualizada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const payTransaction = useMutation({
     mutationFn: async (txId: string) => {
       const { data: tx, error: fetchErr } = await supabase
@@ -257,6 +272,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     createTransaction,
     createInstallments,
     createBoletoInstallments,
+    updateTransaction,
     payTransaction,
     createPixPayment,
   };

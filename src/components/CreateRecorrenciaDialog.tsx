@@ -9,12 +9,13 @@ import { useRecorrencias } from "@/hooks/useRecorrencias";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
 import { useCategorias } from "@/hooks/useCategorias";
+import { CurrencyInput } from "@/components/CurrencyInput";
+import { NumericInput } from "@/components/NumericInput";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
-
 
 export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
   const { create } = useRecorrencias();
@@ -24,11 +25,11 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
 
   const [form, setForm] = useState({
     nome: "",
-    valor_estimado: 0,
+    valor_estimado: "",
     eh_variavel: false,
-    dia_vencimento_padrao: 10,
-    origem: "",        // onde a conta chega: email, site, boleto, app
-    forma_pagamento: "", // como paga: pix, cartao, debito_automatico, boleto, dinheiro
+    dia_vencimento_padrao: "10",
+    origem: "",
+    forma_pagamento: "",
     cartao_id: "",
     banco_id: "",
     categoria_id: "",
@@ -37,14 +38,11 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
 
   const set = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
 
-  // Reset dependent fields when forma_pagamento changes
   const setFormaPagamento = (v: string) => {
     setForm(f => ({
       ...f,
       forma_pagamento: v,
-      // Clear card if not paying by card
       cartao_id: v === "cartao" ? f.cartao_id : "",
-      // Clear bank if paying by card (card already has a bank)
       banco_id: v === "cartao" ? "" : f.banco_id,
     }));
   };
@@ -59,16 +57,16 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
     e.preventDefault();
     await create.mutateAsync({
       nome: form.nome,
-      valor_estimado: form.valor_estimado,
+      valor_estimado: Number(form.valor_estimado) || 0,
       eh_variavel: form.eh_variavel,
-      dia_vencimento_padrao: form.dia_vencimento_padrao,
+      dia_vencimento_padrao: Number(form.dia_vencimento_padrao),
       cartao_id: form.cartao_id || undefined,
       banco_id: form.banco_id || undefined,
       origem: (form.origem as any) || undefined,
       categoria_id: form.categoria_id || undefined,
       url_site_login: form.url_site_login || undefined,
     });
-    setForm({ nome: "", valor_estimado: 0, eh_variavel: false, dia_vencimento_padrao: 10, origem: "", forma_pagamento: "", cartao_id: "", banco_id: "", categoria_id: "", url_site_login: "" });
+    setForm({ nome: "", valor_estimado: "", eh_variavel: false, dia_vencimento_padrao: "10", origem: "", forma_pagamento: "", cartao_id: "", banco_id: "", categoria_id: "", url_site_login: "" });
     onOpenChange(false);
   };
 
@@ -97,11 +95,11 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Valor Estimado (R$)</Label>
-              <Input type="number" min={0} step={0.01} value={form.valor_estimado || ""} onChange={e => set("valor_estimado", Number(e.target.value))} required />
+              <CurrencyInput value={form.valor_estimado} onValueChange={v => set("valor_estimado", v)} required />
             </div>
             <div>
               <Label>Dia do Vencimento</Label>
-              <Input type="number" min={1} max={31} value={form.dia_vencimento_padrao} onChange={e => set("dia_vencimento_padrao", Number(e.target.value))} required />
+              <NumericInput value={form.dia_vencimento_padrao} onValueChange={v => set("dia_vencimento_padrao", v)} placeholder="10" required />
             </div>
           </div>
 
@@ -115,7 +113,6 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
                 <SelectItem value="boleto">Boleto (correio)</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground mt-1">Onde você recebe ou consulta essa conta</p>
           </div>
 
           <div>
@@ -132,12 +129,9 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
             </Select>
           </div>
 
-          {/* PIX / Dinheiro → Bank required */}
           {needsBank && (
             <div>
-              <Label className="flex items-center gap-1">
-                Banco de origem <span className="text-destructive">*</span>
-              </Label>
+              <Label className="flex items-center gap-1">Banco de origem <span className="text-destructive">*</span></Label>
               <Select value={form.banco_id} onValueChange={v => set("banco_id", v)}>
                 <SelectTrigger><SelectValue placeholder="De qual banco sai?" /></SelectTrigger>
                 <SelectContent>
@@ -146,16 +140,12 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-[10px] text-muted-foreground mt-1">Obrigatório para manter o saldo sincronizado</p>
             </div>
           )}
 
-          {/* Cartão → Card selector */}
           {needsCard && (
             <div>
-              <Label className="flex items-center gap-1">
-                Cartão <span className="text-destructive">*</span>
-              </Label>
+              <Label className="flex items-center gap-1">Cartão <span className="text-destructive">*</span></Label>
               <Select value={form.cartao_id} onValueChange={v => set("cartao_id", v)}>
                 <SelectTrigger><SelectValue placeholder="Qual cartão?" /></SelectTrigger>
                 <SelectContent>
@@ -164,11 +154,9 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-[10px] text-muted-foreground mt-1">O banco já está vinculado ao cartão</p>
             </div>
           )}
 
-          {/* Débito automático → Bank */}
           {form.forma_pagamento === "debito_automatico" && (
             <div>
               <Label>Banco do débito automático</Label>
