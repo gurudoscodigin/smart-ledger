@@ -253,6 +253,42 @@ export type Database = {
         }
         Relationships: []
       }
+      fornecedores: {
+        Row: {
+          chave_pix: string | null
+          cnpj: string | null
+          created_at: string
+          dados_bancarios: Json | null
+          id: string
+          nome: string
+          notas: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          chave_pix?: string | null
+          cnpj?: string | null
+          created_at?: string
+          dados_bancarios?: Json | null
+          id?: string
+          nome: string
+          notas?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          chave_pix?: string | null
+          cnpj?: string | null
+          created_at?: string
+          dados_bancarios?: Json | null
+          id?: string
+          nome?: string
+          notas?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -358,6 +394,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      telegram_bot_state: {
+        Row: {
+          id: number
+          update_offset: number
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          update_offset?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          update_offset?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      telegram_messages: {
+        Row: {
+          chat_id: number
+          created_at: string
+          id: string
+          processed: boolean
+          raw_update: Json
+          text: string | null
+          update_id: number
+        }
+        Insert: {
+          chat_id: number
+          created_at?: string
+          id?: string
+          processed?: boolean
+          raw_update: Json
+          text?: string | null
+          update_id: number
+        }
+        Update: {
+          chat_id?: number
+          created_at?: string
+          id?: string
+          processed?: boolean
+          raw_update?: Json
+          text?: string | null
+          update_id?: number
+        }
+        Relationships: []
       }
       transacoes: {
         Row: {

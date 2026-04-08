@@ -2,11 +2,12 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
+import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark } from "lucide-react";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { CreateCardDialog } from "@/components/CreateCardDialog";
+import { CreateBankDialog } from "@/components/CreateBankDialog";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -18,6 +19,7 @@ export default function CardVault() {
   const { data: txData } = useTransacoes();
   const { role } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
+  const [createBankOpen, setCreateBankOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedBanks, setExpandedBanks] = useState<Set<string>>(new Set(["__unlinked"]));
 
@@ -145,9 +147,14 @@ export default function CardVault() {
             <p className="text-muted-foreground text-sm mt-1">Gestão de cartões e assinaturas</p>
           </div>
           {(role === "admin" || role === "supervisor") && (
-            <Button className="gap-2" onClick={() => setCreateOpen(true)}>
-              <Plus className="w-4 h-4" /> Novo Cartão
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" className="gap-2" onClick={() => setCreateBankOpen(true)}>
+                <Landmark className="w-4 h-4" /> Novo Banco
+              </Button>
+              <Button className="gap-2" onClick={() => setCreateOpen(true)}>
+                <Plus className="w-4 h-4" /> Novo Cartão
+              </Button>
+            </div>
           )}
         </div>
 
@@ -283,6 +290,7 @@ export default function CardVault() {
       </div>
 
       <CreateCardDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateBankDialog open={createBankOpen} onOpenChange={setCreateBankOpen} />
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
