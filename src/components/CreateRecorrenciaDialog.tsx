@@ -34,14 +34,33 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
     valor_estimado: 0,
     eh_variavel: false,
     dia_vencimento_padrao: 10,
+    origem: "",        // onde a conta chega: email, site, boleto, app
+    forma_pagamento: "", // como paga: pix, cartao, debito_automatico, boleto, dinheiro
     cartao_id: "",
     banco_id: "",
-    origem: "",
     categoria_id: "",
     url_site_login: "",
   });
 
   const set = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
+
+  // Reset dependent fields when forma_pagamento changes
+  const setFormaPagamento = (v: string) => {
+    setForm(f => ({
+      ...f,
+      forma_pagamento: v,
+      // Clear card if not paying by card
+      cartao_id: v === "cartao" ? f.cartao_id : "",
+      // Clear bank if paying by card (card already has a bank)
+      banco_id: v === "cartao" ? "" : f.banco_id,
+    }));
+  };
+
+  const needsBank = form.forma_pagamento === "pix" || form.forma_pagamento === "dinheiro";
+  const needsCard = form.forma_pagamento === "cartao";
+  const canSubmit = !create.isPending
+    && (!needsBank || form.banco_id)
+    && (!needsCard || form.cartao_id);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +75,7 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
       categoria_id: form.categoria_id || undefined,
       url_site_login: form.url_site_login || undefined,
     });
-    setForm({ nome: "", valor_estimado: 0, eh_variavel: false, dia_vencimento_padrao: 10, cartao_id: "", banco_id: "", origem: "", categoria_id: "", url_site_login: "" });
+    setForm({ nome: "", valor_estimado: 0, eh_variavel: false, dia_vencimento_padrao: 10, origem: "", forma_pagamento: "", cartao_id: "", banco_id: "", categoria_id: "", url_site_login: "" });
     onOpenChange(false);
   };
 
@@ -94,43 +113,82 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
           </div>
 
           <div>
-            <Label>Cartão Vinculado</Label>
-            <Select value={form.cartao_id} onValueChange={v => set("cartao_id", v)}>
-              <SelectTrigger><SelectValue placeholder="Nenhum (opcional)" /></SelectTrigger>
-              <SelectContent>
-                {(cartoes || []).map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.apelido} (•••• {c.final_cartao})</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Origem</Label>
+            <Label>Origem da conta</Label>
             <Select value={form.origem} onValueChange={v => set("origem", v)}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="De onde vem essa conta?" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="email">E-mail</SelectItem>
-                <SelectItem value="site">Site</SelectItem>
-                <SelectItem value="boleto">Boleto</SelectItem>
+                <SelectItem value="site">Site / App</SelectItem>
+                <SelectItem value="boleto">Boleto (correio)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground mt-1">Onde você recebe ou consulta essa conta</p>
+          </div>
+
+          <div>
+            <Label>Forma de pagamento</Label>
+            <Select value={form.forma_pagamento} onValueChange={setFormaPagamento}>
+              <SelectTrigger><SelectValue placeholder="Como você paga?" /></SelectTrigger>
+              <SelectContent>
                 <SelectItem value="pix">PIX</SelectItem>
-                <SelectItem value="debito_automatico">Débito Automático</SelectItem>
                 <SelectItem value="cartao">Cartão</SelectItem>
+                <SelectItem value="boleto">Boleto</SelectItem>
+                <SelectItem value="debito_automatico">Débito Automático</SelectItem>
+                <SelectItem value="dinheiro">Dinheiro</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          <div>
-            <Label>Banco</Label>
-            <Select value={form.banco_id} onValueChange={v => set("banco_id", v)}>
-              <SelectTrigger><SelectValue placeholder="Selecione (opcional)" /></SelectTrigger>
-              <SelectContent>
-                {(bancos || []).map(b => (
-                  <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* PIX / Dinheiro → Bank required */}
+          {needsBank && (
+            <div>
+              <Label className="flex items-center gap-1">
+                Banco de origem <span className="text-destructive">*</span>
+              </Label>
+              <Select value={form.banco_id} onValueChange={v => set("banco_id", v)}>
+                <SelectTrigger><SelectValue placeholder="De qual banco sai?" /></SelectTrigger>
+                <SelectContent>
+                  {(bancos || []).map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground mt-1">Obrigatório para manter o saldo sincronizado</p>
+            </div>
+          )}
+
+          {/* Cartão → Card selector */}
+          {needsCard && (
+            <div>
+              <Label className="flex items-center gap-1">
+                Cartão <span className="text-destructive">*</span>
+              </Label>
+              <Select value={form.cartao_id} onValueChange={v => set("cartao_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Qual cartão?" /></SelectTrigger>
+                <SelectContent>
+                  {(cartoes || []).map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.apelido} (•••• {c.final_cartao})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground mt-1">O banco já está vinculado ao cartão</p>
+            </div>
+          )}
+
+          {/* Débito automático → Bank */}
+          {form.forma_pagamento === "debito_automatico" && (
+            <div>
+              <Label>Banco do débito automático</Label>
+              <Select value={form.banco_id} onValueChange={v => set("banco_id", v)}>
+                <SelectTrigger><SelectValue placeholder="Qual banco?" /></SelectTrigger>
+                <SelectContent>
+                  {(bancos || []).map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div>
             <Label>Categoria</Label>
@@ -152,7 +210,7 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
             <Input placeholder="https://..." value={form.url_site_login} onChange={e => set("url_site_login", e.target.value)} />
           </div>
 
-          <Button type="submit" className="w-full" disabled={create.isPending}>
+          <Button type="submit" className="w-full" disabled={!canSubmit}>
             {create.isPending ? "Salvando..." : "Cadastrar Conta Fixa"}
           </Button>
         </form>
