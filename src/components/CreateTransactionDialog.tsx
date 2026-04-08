@@ -103,10 +103,35 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                     <SelectItem value="email">E-mail</SelectItem>
                     <SelectItem value="site">Site</SelectItem>
                     <SelectItem value="debito_automatico">Déb. Automático</SelectItem>
+                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                    <SelectItem value="cartao">Cartão</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <Button type="submit" className="w-full" disabled={createTransaction.isPending}>Registrar</Button>
+              {/* Banco obrigatório para PIX e Dinheiro */}
+              {(simple.origem === "pix" || simple.origem === "dinheiro") && (
+                <div>
+                  <Label className="flex items-center gap-1">
+                    Banco de Origem <span className="text-destructive">*</span>
+                  </Label>
+                  <Select value={simple.banco_id} onValueChange={v => setSimple(s => ({ ...s, banco_id: v }))}>
+                    <SelectTrigger><SelectValue placeholder="De qual banco saiu?" /></SelectTrigger>
+                    <SelectContent>
+                      {(bancos || []).map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground mt-1">Obrigatório para manter o saldo sincronizado</p>
+                </div>
+              )}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={createTransaction.isPending || ((simple.origem === "pix" || simple.origem === "dinheiro") && !simple.banco_id)}
+              >
+                Registrar
+              </Button>
             </form>
           </TabsContent>
 
