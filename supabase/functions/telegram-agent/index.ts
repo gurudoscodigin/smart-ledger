@@ -4,6 +4,12 @@ const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
 const AI_GATEWAY = "https://api.openai.com/v1/chat/completions";
 const AI_MODEL = "gpt-4o-mini";
 
+function getRequiredEnv(name: string) {
+  const value = Deno.env.get(name);
+  if (!value) throw new Error(`${name} not configured`);
+  return value;
+}
+
 Deno.serve(async (req) => {
   try {
     const { update } = await req.json();
@@ -13,11 +19,11 @@ Deno.serve(async (req) => {
     const chatId = message.chat.id;
     const text = message.text ?? "";
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
-    const OPENAI_KEY = Deno.env.get("OPENIA_API_KEY")!;
-    const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY")!;
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const LOVABLE_API_KEY = getRequiredEnv("LOVABLE_API_KEY");
+    const OPENAI_KEY = getRequiredEnv("OPENIA_API_KEY");
+    const TELEGRAM_API_KEY = getRequiredEnv("TELEGRAM_API_KEY");
+    const supabaseUrl = getRequiredEnv("SUPABASE_URL");
+    const serviceKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     const supabase = createClient(supabaseUrl, serviceKey);
 
     // ─── WHITELIST: Verify telegram_id ───
@@ -238,7 +244,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, transaction_id: newTx.id });
   } catch (err: any) {
     console.error("Agent error:", err);
-    return jsonResponse({ error: err.message }, 500);
+    return jsonResponse({ ok: false, error: err.message }, 500);
   }
 });
 
@@ -1232,16 +1238,83 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
 }
 
 // ─── TELEGRAM SEND ───
-async function sendTelegram(chatId: number, text: string, lovableKey: string, telegramKey: string, parseMode = "HTML") {
-  await fetch(`${GATEWAY_URL}/sendMessage`, {
+async function sendTelegram(chatId: number, text: string, lovableKey: string, telegramKey: string, parseMode?: string) {
+  const primaryAttempt = await postTelegramMessage(chatId, text, lovableKey, telegramKey, parseMode);
+
+  if (primaryAttempt.ok) return primaryAttempt;
+
+  console.error("Telegram send failed on primary attempt", {
+    chatId,
+    parseMode,
+    status: primaryAttempt.status,
+    body: primaryAttempt.body,
+  });
+
+  if (!parseMode) {
+    throw new Error(`Telegram send failed (${primaryAttempt.status}): ${primaryAttempt.body}`);
+  }
+
+  const fallbackAttempt = await postTelegramMessage(chatId, text, lovableKey, telegramKey);
+  if (fallbackAttempt.ok) {
+    console.warn("Telegram send succeeded without parse_mode fallback", { chatId, parseMode });
+    return fallbackAttempt;
+  }
+
+  console.error("Telegram send failed on fallback attempt", {
+    chatId,
+    status: fallbackAttempt.status,
+    body: fallbackAttempt.body,
+  });
+
+  throw new Error(
+    `Telegram send failed (${primaryAttempt.status}/${fallbackAttempt.status}): ${fallbackAttempt.body || primaryAttempt.body}`
+  );
+}
+
+async function postTelegramMessage(chatId: number, text: string, lovableKey: string, telegramKey: string, parseMode?: string) {
+  const payload: Record<string, unknown> = {
+    chat_id: chatId,
+    text,
+  };
+
+  if (parseMode) payload.parse_mode = parseMode;
+
+  const response = await fetch(`${GATEWAY_URL}/sendMessage`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${lovableKey}`,
       "X-Connection-Api-Key": telegramKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: parseMode }),
+    body: JSON.stringify(payload),
   });
+
+  const body = await response.text();
+
+  try {
+    const parsed = body ? JSON.parse(body) : null;
+    if (!response.ok || parsed?.ok === false) {
+      return {
+        ok: false,
+        status: response.status,
+        body: body || response.statusText,
+      };
+    }
+  } catch {
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        body: body || response.statusText,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    body,
+  };
 }
 
 function jsonResponse(data: any, status = 200) {

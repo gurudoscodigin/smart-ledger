@@ -84,8 +84,28 @@ Deno.serve(async (_req) => {
           },
           body: JSON.stringify({ update }),
         });
-        const agentResult = await agentResp.text();
-        console.log(`Agent response for update ${update.update_id}:`, agentResult);
+        const agentResultText = await agentResp.text();
+        console.log(`Agent response for update ${update.update_id}:`, agentResultText);
+
+        let agentResult: { ok?: boolean } | null = null;
+        try {
+          agentResult = JSON.parse(agentResultText);
+        } catch {
+          agentResult = null;
+        }
+
+        if (!agentResp.ok || agentResult?.ok === false) {
+          console.error(`telegram-agent failed for update ${update.update_id}:`, {
+            status: agentResp.status,
+            body: agentResultText,
+          });
+          continue;
+        }
+
+        await supabase
+          .from("telegram_messages")
+          .update({ processed: true })
+          .eq("update_id", update.update_id);
       } catch (e) {
         console.error("Error calling telegram-agent:", e);
       }
