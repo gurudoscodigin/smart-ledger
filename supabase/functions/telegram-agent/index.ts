@@ -887,7 +887,7 @@ async function extractCardData(text: string, userId: string, supabase: any, apiK
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -942,7 +942,7 @@ async function extractRecurrenceData(text: string, userId: string, supabase: any
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -997,7 +997,7 @@ async function extractTransactionData(text: string, userId: string, supabase: an
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -1102,7 +1102,7 @@ async function handleBIQuery(question: string, userId: string, supabase: any, ap
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -1218,7 +1218,7 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: AI_MODEL,
         messages: [
           {
             role: "system",
