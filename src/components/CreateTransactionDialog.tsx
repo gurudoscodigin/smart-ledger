@@ -106,7 +106,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
               <div><Label>Descrição</Label><Input placeholder="Ex: Multa de trânsito" value={simple.descricao} onChange={e => setSimple(s => ({ ...s, descricao: e.target.value }))} required /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><Label>Valor (R$)</Label><Input type="number" min={0} step={0.01} value={simple.valor || ""} onChange={e => setSimple(s => ({ ...s, valor: Number(e.target.value) }))} required /></div>
-                <div><Label>Vencimento</Label><Input type="date" value={simple.data_vencimento} onChange={e => setSimple(s => ({ ...s, data_vencimento: e.target.value }))} required /></div>
+                <div><Label>Vencimento</Label><Input type="date" value={simple.data_vencimento} onChange={e => setSimple(s => ({ ...s, data_vencimento: e.target.value }))} /></div>
               </div>
               <div><Label>Tipo</Label>
                 <Select value={simple.categoria_tipo} onValueChange={v => setSimple(s => ({ ...s, categoria_tipo: v }))}>
