@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const AI_GATEWAY = "https://api.openai.com/v1/chat/completions";
+const AI_MODEL = "gpt-4o-mini";
 
 Deno.serve(async (req) => {
   try {
