@@ -30,11 +30,17 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Convert MM/YY to YYYY-MM-01 for DB
+    let dataValidade: string | null = null;
+    if (form.data_validade && form.data_validade.length === 5) {
+      const [mm, yy] = form.data_validade.split("/");
+      dataValidade = `20${yy}-${mm}-01`;
+    }
     await create.mutateAsync({
       ...form,
       limite_disponivel: form.limite_total,
       banco_id: form.banco_id,
-      data_validade: form.data_validade || null,
+      data_validade: dataValidade,
     });
     onOpenChange(false);
     setForm({ apelido: "", final_cartao: "", bandeira: "" as any, tipo_funcao: "" as any, formato: "fisico" as any, limite_total: 0, dia_fechamento: 25, dia_vencimento: 5, banco_id: "", data_validade: "" });
