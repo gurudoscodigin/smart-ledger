@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { useBancos } from "@/hooks/useBancos";
 import { useCategorias } from "@/hooks/useCategorias";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
+import { getSubcategorias } from "@/lib/subcategorias";
 
 interface Props {
   open: boolean;
@@ -33,10 +34,18 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
     cartao_id: "",
     banco_id: "",
     categoria_id: "",
+    subcategoria: "",
     url_site_login: "",
   });
 
   const set = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
+
+  const selectedCategoria = useMemo(() => {
+    if (!form.categoria_id || !categorias) return null;
+    return categorias.find(c => c.id === form.categoria_id);
+  }, [form.categoria_id, categorias]);
+
+  const subcategorias = useMemo(() => getSubcategorias(selectedCategoria?.nome), [selectedCategoria]);
 
   const setFormaPagamento = (v: string) => {
     setForm(f => ({
@@ -66,7 +75,7 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
       categoria_id: form.categoria_id || undefined,
       url_site_login: form.url_site_login || undefined,
     });
-    setForm({ nome: "", valor_estimado: "", eh_variavel: false, dia_vencimento_padrao: "10", origem: "", forma_pagamento: "", cartao_id: "", banco_id: "", categoria_id: "", url_site_login: "" });
+    setForm({ nome: "", valor_estimado: "", eh_variavel: false, dia_vencimento_padrao: "10", origem: "", forma_pagamento: "", cartao_id: "", banco_id: "", categoria_id: "", subcategoria: "", url_site_login: "" });
     onOpenChange(false);
   };
 
@@ -102,6 +111,32 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
               <NumericInput value={form.dia_vencimento_padrao} onValueChange={v => set("dia_vencimento_padrao", v)} placeholder="10" required />
             </div>
           </div>
+
+          <div>
+            <Label>Categoria</Label>
+            <Select value={form.categoria_id} onValueChange={v => { set("categoria_id", v); set("subcategoria", ""); }}>
+              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent>
+                {(categorias || []).map(c => (
+                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {subcategorias.length > 0 && (
+            <div>
+              <Label>Subcategoria</Label>
+              <Select value={form.subcategoria} onValueChange={v => set("subcategoria", v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione a subcategoria" /></SelectTrigger>
+                <SelectContent>
+                  {subcategorias.map(s => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div>
             <Label>Origem da conta</Label>
@@ -170,18 +205,6 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
               </Select>
             </div>
           )}
-
-          <div>
-            <Label>Categoria</Label>
-            <Select value={form.categoria_id} onValueChange={v => set("categoria_id", v)}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {(categorias || []).map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
 
           <div>
             <Label>URL / Site de Login (opcional)</Label>

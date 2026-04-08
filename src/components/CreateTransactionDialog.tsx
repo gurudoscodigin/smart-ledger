@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,8 +8,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
+import { useCategorias } from "@/hooks/useCategorias";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
+import { getSubcategorias, hasSubcategorias } from "@/lib/subcategorias";
 
 interface Props {
   open: boolean;
@@ -20,6 +22,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
   const { createTransaction, createInstallments, createPixPayment } = useTransacoes();
   const { data: cartoes } = useCartoes();
   const { data: bancos } = useBancos();
+  const { data: categorias } = useCategorias();
   const [tab, setTab] = useState("avulsa");
 
   const [simple, setSimple] = useState({
@@ -29,10 +32,19 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
     forma_pagamento: "",
     banco_id: "",
     cartao_id: "",
+    categoria_id: "",
+    subcategoria: "",
   });
 
   const [inst, setInst] = useState({ descricao: "", valorTotal: "", parcelas: "2", cartaoId: "", diaCobranca: "10" });
   const [pix, setPix] = useState({ descricao: "", valor: "", bancoId: "" });
+
+  const selectedCategoria = useMemo(() => {
+    if (!simple.categoria_id || !categorias) return null;
+    return categorias.find(c => c.id === simple.categoria_id);
+  }, [simple.categoria_id, categorias]);
+
+  const subcategorias = useMemo(() => getSubcategorias(selectedCategoria?.nome), [selectedCategoria]);
 
   const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
   const needsCard = simple.forma_pagamento === "cartao";
@@ -58,6 +70,8 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
       categoria_tipo: simple.categoria_tipo,
       banco_id: simple.banco_id || null,
       cartao_id: simple.cartao_id || null,
+      categoria_id: simple.categoria_id || null,
+      subcategoria: simple.subcategoria || null,
       origem: (simple.forma_pagamento as any) || null,
       status: "pendente",
     });
@@ -117,6 +131,30 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div><Label>Categoria</Label>
+                <Select value={simple.categoria_id} onValueChange={v => setSimple(s => ({ ...s, categoria_id: v, subcategoria: "" }))}>
+                  <SelectTrigger><SelectValue placeholder="Selecione a categoria" /></SelectTrigger>
+                  <SelectContent>
+                    {(categorias || []).map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {subcategorias.length > 0 && (
+                <div><Label>Subcategoria</Label>
+                  <Select value={simple.subcategoria} onValueChange={v => setSimple(s => ({ ...s, subcategoria: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Selecione a subcategoria" /></SelectTrigger>
+                    <SelectContent>
+                      {subcategorias.map(s => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div><Label>Origem da conta</Label>
                 <Select value={simple.origem} onValueChange={v => setSimple(s => ({ ...s, origem: v }))}>
