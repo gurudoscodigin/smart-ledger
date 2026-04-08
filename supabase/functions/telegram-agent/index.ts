@@ -228,12 +228,15 @@ Deno.serve(async (req) => {
     if (extraction.cartao_ref) {
       const { data: cartao } = await supabase
         .from("cartoes")
-        .select("id")
+        .select("id, tipo_funcao")
         .eq("user_id", userId)
         .or(`apelido.ilike.%${extraction.cartao_ref}%,final_cartao.eq.${extraction.cartao_ref}`)
         .limit(1)
         .single();
-      if (cartao) txData.cartao_id = cartao.id;
+      if (cartao) {
+        txData.cartao_id = cartao.id;
+        // If card is multiplo and user didn't specify debit/credit, it's already handled by origin
+      }
     }
 
     // Match bank
