@@ -189,6 +189,15 @@ export default function BillsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="font-medium text-sm truncate">{tx.descricao}</p>
+                            {tx.categoria_tipo === "divida" && tx.parcela_atual && tx.parcela_total ? (
+                              <Badge variant="outline" className="text-[10px] gap-1 border-primary/30 text-primary">
+                                <CreditCard className="w-3 h-3" /> {tx.parcela_atual}/{tx.parcela_total}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] gap-1 border-accent-foreground/30 text-accent-foreground">
+                                <Zap className="w-3 h-3" /> Avulsa
+                              </Badge>
+                            )}
                             <Badge variant="secondary" className={`text-[10px] ${
                               tx.status === "pago" ? "bg-status-paid/10 text-status-paid" :
                               tx.status === "atrasado" ? "bg-status-late/10 text-status-late" :
@@ -198,10 +207,10 @@ export default function BillsPage() {
                             </Badge>
                           </div>
                           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                            <span>{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                            {tx.data_vencimento && <span>{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>}
                             {tx.origem && <span>• {tx.origem}</span>}
-                            {tx.bancos && <span>• {tx.bancos.nome}</span>}
-                            {tx.cartoes && <span>• {tx.cartoes.apelido}</span>}
+                            {tx.bancos && <span className="flex items-center gap-0.5"><Landmark className="w-3 h-3" /> {tx.bancos.nome}</span>}
+                            {tx.cartoes && <span className="flex items-center gap-0.5"><CreditCard className="w-3 h-3" /> {tx.cartoes.apelido}</span>}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
