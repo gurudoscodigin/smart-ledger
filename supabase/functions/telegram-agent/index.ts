@@ -303,7 +303,6 @@ async function handleCommand(
         break;
       }
 
-      // Check which have comprovantes
       const txIds = pending.map((t: any) => t.id);
       const { data: comps } = await supabase
         .from("comprovantes")
@@ -410,12 +409,11 @@ async function handleCommand(
         await sendTelegram(chatId, "⛔ Seu perfil de Assistente não tem permissão para alterar limites de cartão.", lovableKey, telegramKey);
         break;
       }
-      // Parse: /alterar_limite Roxinho 15000
       const parts = argStr.split(" ");
       const newLimit = Number(parts.pop());
       const cardName = parts.join(" ");
       if (!cardName || isNaN(newLimit)) {
-        await sendTelegram(chatId, "Use: /alterar_limite [nome cartão] [novo limite]", lovableKey, telegramKey);
+        await sendTelegram(chatId, "Use: /alterar\\_limite [nome cartão] [novo limite]", lovableKey, telegramKey);
         break;
       }
       const { data: card } = await supabase
@@ -437,20 +435,552 @@ async function handleCommand(
       break;
     }
 
+    // ─── NEW: Create Bank ───
+    case "/novo_banco": {
+      if (!argStr) {
+        await sendTelegram(chatId, "Use: /novo\\_banco [nome] [saldo inicial]\nExemplo: /novo\\_banco Nubank 5000", lovableKey, telegramKey);
+        break;
+      }
+      const bankParts = argStr.split(" ");
+      const saldoStr = bankParts.pop();
+      const saldo = Number(saldoStr);
+      let bankName: string;
+      let bankSaldo: number;
+
+      if (!isNaN(saldo) && bankParts.length > 0) {
+        bankName = bankParts.join(" ");
+        bankSaldo = saldo;
+      } else {
+        bankName = argStr;
+        bankSaldo = 0;
+      }
+
+      const { data: newBank, error: bankErr } = await supabase
+        .from("bancos")
+        .insert({ nome: bankName, saldo_atual: bankSaldo, user_id: userId })
+        .select("id, nome, saldo_atual")
+        .single();
+
+      if (bankErr) {
+        await sendTelegram(chatId, `❌ Erro ao criar banco: ${bankErr.message}`, lovableKey, telegramKey);
+      } else {
+        await sendTelegram(chatId,
+          `🏦 Banco cadastrado!\n\n` +
+          `📌 Nome: ${newBank.nome}\n` +
+          `💰 Saldo: R$ ${Number(newBank.saldo_atual).toFixed(2)}`,
+          lovableKey, telegramKey
+        );
+      }
+      break;
+    }
+
+    // ─── NEW: Create Card (AI-assisted) ───
+    case "/novo_cartao": {
+      if (!argStr) {
+        await sendTelegram(chatId,
+          "Use: /novo\\_cartao [dados do cartão]\n\n" +
+          "Exemplo:\n/novo\\_cartao Roxinho final 4523 Visa crédito Nubank limite 8000 fecha dia 3 vence dia 10 validade 12/2029\n\n" +
+          "Dados necessários: apelido, final (4 dígitos), bandeira (visa/mastercard/elo/amex), função (débito/crédito/múltiplo), banco, limite, dia fechamento, dia vencimento",
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      const cardExtraction = await extractCardData(argStr, userId, supabase, lovableKey);
+      if (!cardExtraction || cardExtraction.status === "incomplete") {
+        await sendTelegram(chatId,
+          `❓ Faltam informações do cartão:\n${cardExtraction?.missing || "Envie todos os dados necessários."}`,
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      // Match bank
+      let bancoId: string | null = null;
+      if (cardExtraction.banco_ref) {
+        const { data: banco } = await supabase
+          .from("bancos")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("nome", `%${cardExtraction.banco_ref}%`)
+          .limit(1)
+          .single();
+        if (banco) bancoId = banco.id;
+      }
+
+      const { data: newCard, error: cardErr } = await supabase
+        .from("cartoes")
+        .insert({
+          apelido: cardExtraction.apelido,
+          final_cartao: cardExtraction.final_cartao,
+          bandeira: cardExtraction.bandeira,
+          tipo_funcao: cardExtraction.tipo_funcao,
+          formato: cardExtraction.formato || "fisico",
+          limite_total: cardExtraction.limite_total || 0,
+          limite_disponivel: cardExtraction.limite_total || 0,
+          dia_fechamento: cardExtraction.dia_fechamento,
+          dia_vencimento: cardExtraction.dia_vencimento,
+          data_validade: cardExtraction.data_validade || null,
+          banco_id: bancoId,
+          user_id: userId,
+        })
+        .select("id, apelido, final_cartao, bandeira")
+        .single();
+
+      if (cardErr) {
+        await sendTelegram(chatId, `❌ Erro ao criar cartão: ${cardErr.message}`, lovableKey, telegramKey);
+      } else {
+        await sendTelegram(chatId,
+          `💳 Cartão cadastrado!\n\n` +
+          `📌 ${newCard.apelido} (${newCard.final_cartao})\n` +
+          `🏷️ ${newCard.bandeira}\n` +
+          `💰 Limite: R$ ${Number(cardExtraction.limite_total || 0).toFixed(2)}`,
+          lovableKey, telegramKey
+        );
+      }
+      break;
+    }
+
+    // ─── NEW: Create Transaction (structured) ───
+    case "/nova_conta": {
+      if (!argStr) {
+        await sendTelegram(chatId,
+          "Use: /nova\\_conta [dados da conta]\n\n" +
+          "Exemplo:\n/nova\\_conta Aluguel R$ 2500 vence dia 10 fixa boleto banco Itaú categoria Escritório\n\n" +
+          "Ou simplesmente me escreva em linguagem natural que eu entendo!",
+          lovableKey, telegramKey
+        );
+        break;
+      }
+      // Delegate to NLP extraction (same flow as natural language)
+      const txExtraction = await extractTransactionData(argStr, userId, supabase, lovableKey);
+      if (!txExtraction || txExtraction.status === "not_financial") {
+        await sendTelegram(chatId, "❌ Não consegui identificar os dados da conta. Tente novamente com mais detalhes.", lovableKey, telegramKey);
+        break;
+      }
+      if (txExtraction.status === "incomplete") {
+        await sendTelegram(chatId,
+          `📝 Entendi parcialmente:\n• Descrição: ${txExtraction.descricao || "?"}\n• Valor: ${txExtraction.valor ? `R$ ${txExtraction.valor}` : "?"}\n\n❓ ${txExtraction.missing_question}`,
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      // Build transaction following same rules as manual creation
+      const ctxData: any = {
+        descricao: txExtraction.descricao,
+        valor: txExtraction.valor,
+        data_vencimento: txExtraction.data_vencimento || new Date().toISOString().split("T")[0],
+        status: txExtraction.status_pagamento === "pago" ? "pago" : "pendente",
+        categoria_tipo: txExtraction.categoria_tipo || "avulsa",
+        origem: txExtraction.origem || null,
+        user_id: userId,
+      };
+
+      if (txExtraction.status_pagamento === "pago") {
+        ctxData.data_pagamento = txExtraction.data_pagamento || new Date().toISOString().split("T")[0];
+      }
+
+      // Match card
+      if (txExtraction.cartao_ref) {
+        const { data: cartao } = await supabase
+          .from("cartoes")
+          .select("id, banco_id")
+          .eq("user_id", userId)
+          .or(`apelido.ilike.%${txExtraction.cartao_ref}%,final_cartao.eq.${txExtraction.cartao_ref}`)
+          .limit(1)
+          .single();
+        if (cartao) {
+          ctxData.cartao_id = cartao.id;
+          if (cartao.banco_id) ctxData.banco_id = cartao.banco_id;
+        }
+      }
+
+      // Match bank (PIX/dinheiro/débito automático require bank)
+      if (txExtraction.banco_ref && !ctxData.banco_id) {
+        const { data: banco } = await supabase
+          .from("bancos")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("nome", `%${txExtraction.banco_ref}%`)
+          .limit(1)
+          .single();
+        if (banco) ctxData.banco_id = banco.id;
+      }
+
+      // Match category
+      if (txExtraction.categoria_ref) {
+        const { data: cat } = await supabase
+          .from("categorias")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("nome", `%${txExtraction.categoria_ref}%`)
+          .limit(1)
+          .single();
+        if (cat) ctxData.categoria_id = cat.id;
+      }
+
+      const { data: newTx2, error: txErr2 } = await supabase
+        .from("transacoes")
+        .insert(ctxData)
+        .select("id")
+        .single();
+
+      if (txErr2) {
+        await sendTelegram(chatId, `❌ Erro ao registrar conta: ${txErr2.message}`, lovableKey, telegramKey);
+      } else {
+        // PIX: deduct bank balance
+        if (txExtraction.origem === "pix" && ctxData.banco_id && txExtraction.status_pagamento === "pago") {
+          const { data: banco } = await supabase
+            .from("bancos")
+            .select("saldo_atual")
+            .eq("id", ctxData.banco_id)
+            .single();
+          if (banco) {
+            await supabase
+              .from("bancos")
+              .update({ saldo_atual: banco.saldo_atual - txExtraction.valor })
+              .eq("id", ctxData.banco_id);
+          }
+        }
+
+        let resp = `✅ Conta registrada!\n\n📝 ${txExtraction.descricao}\n💰 R$ ${Number(txExtraction.valor).toFixed(2)}`;
+        if (ctxData.data_vencimento) resp += `\n📅 Vencimento: ${new Date(ctxData.data_vencimento).toLocaleDateString("pt-BR")}`;
+        resp += `\n📊 Tipo: ${ctxData.categoria_tipo} | Status: ${ctxData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
+        await sendTelegram(chatId, resp, lovableKey, telegramKey);
+      }
+      break;
+    }
+
+    // ─── NEW: Monthly Report ───
+    case "/relatorio": {
+      let rMonth: number, rYear: number;
+      if (argStr) {
+        const rParts = argStr.split(/[\s\/\-]+/);
+        rMonth = Number(rParts[0]);
+        rYear = rParts[1] ? Number(rParts[1]) : new Date().getFullYear();
+      } else {
+        rMonth = new Date().getMonth() + 1;
+        rYear = new Date().getFullYear();
+      }
+
+      if (isNaN(rMonth) || rMonth < 1 || rMonth > 12) {
+        await sendTelegram(chatId, "Use: /relatorio [mês] [ano]\nExemplo: /relatorio 6 2026", lovableKey, telegramKey);
+        break;
+      }
+
+      const rStart = `${rYear}-${String(rMonth).padStart(2, "0")}-01`;
+      const rEnd = rMonth === 12 ? `${rYear + 1}-01-01` : `${rYear}-${String(rMonth + 1).padStart(2, "0")}-01`;
+
+      const { data: rTxs } = await supabase
+        .from("transacoes")
+        .select("descricao, valor, status, categoria_tipo, data_vencimento, categorias(nome)")
+        .eq("user_id", userId)
+        .is("deleted_at", null)
+        .gte("data_vencimento", rStart)
+        .lt("data_vencimento", rEnd)
+        .order("data_vencimento");
+
+      if (!rTxs?.length) {
+        await sendTelegram(chatId, `📊 Nenhuma transação em ${String(rMonth).padStart(2, "0")}/${rYear}.`, lovableKey, telegramKey);
+        break;
+      }
+
+      const pago = rTxs.filter((t: any) => t.status === "pago").reduce((s: number, t: any) => s + Number(t.valor), 0);
+      const pendente = rTxs.filter((t: any) => t.status === "pendente").reduce((s: number, t: any) => s + Number(t.valor), 0);
+      const atrasado = rTxs.filter((t: any) => t.status === "atrasado").reduce((s: number, t: any) => s + Number(t.valor), 0);
+      const total = pago + pendente + atrasado;
+
+      // Group by categoria_tipo
+      const byTipo: Record<string, number> = {};
+      for (const t of rTxs) {
+        byTipo[t.categoria_tipo] = (byTipo[t.categoria_tipo] || 0) + Number(t.valor);
+      }
+
+      // Group by category
+      const byCat: Record<string, number> = {};
+      for (const t of rTxs) {
+        const catName = (t as any).categorias?.nome || "Sem categoria";
+        byCat[catName] = (byCat[catName] || 0) + Number(t.valor);
+      }
+
+      const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+      let msg = `📊 *Relatório ${meses[rMonth - 1]}/${rYear}*\n\n`;
+      msg += `📋 Total de lançamentos: ${rTxs.length}\n`;
+      msg += `💰 Total: R$ ${total.toFixed(2)}\n`;
+      msg += `✅ Pago: R$ ${pago.toFixed(2)}\n`;
+      msg += `⏳ Pendente: R$ ${pendente.toFixed(2)}\n`;
+      msg += `🔴 Atrasado: R$ ${atrasado.toFixed(2)}\n\n`;
+
+      msg += `*Por tipo:*\n`;
+      for (const [tipo, val] of Object.entries(byTipo)) {
+        const icon = tipo === "fixa" ? "🔒" : tipo === "avulsa" ? "📝" : tipo === "variavel" ? "📊" : "💳";
+        msg += `${icon} ${tipo}: R$ ${val.toFixed(2)}\n`;
+      }
+
+      msg += `\n*Por categoria:*\n`;
+      const sortedCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+      for (const [cat, val] of sortedCats.slice(0, 8)) {
+        const pct = Math.round((val / total) * 100);
+        msg += `• ${cat}: R$ ${val.toFixed(2)} (${pct}%)\n`;
+      }
+
+      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      break;
+    }
+
+    // ─── NEW: Attach receipt to transaction ───
+    case "/anexar": {
+      if (!argStr) {
+        await sendTelegram(chatId,
+          "Use: /anexar [descrição da conta]\n\n" +
+          "Depois envie a foto/PDF do comprovante.\n" +
+          "Ou envie a foto diretamente que eu vinculo à transação mais recente sem comprovante.",
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      // Find matching transaction
+      const { data: matchTxs } = await supabase
+        .from("transacoes")
+        .select("id, descricao, valor, data_vencimento")
+        .eq("user_id", userId)
+        .is("deleted_at", null)
+        .ilike("descricao", `%${argStr}%`)
+        .order("data_vencimento", { ascending: false })
+        .limit(5);
+
+      if (!matchTxs?.length) {
+        await sendTelegram(chatId, `❌ Nenhuma transação encontrada com "${argStr}". Verifique o nome.`, lovableKey, telegramKey);
+        break;
+      }
+
+      let msg = `📎 Encontrei ${matchTxs.length} transação(ões):\n\n`;
+      for (let i = 0; i < matchTxs.length; i++) {
+        const t = matchTxs[i];
+        const dt = new Date(t.data_vencimento).toLocaleDateString("pt-BR");
+        msg += `${i + 1}. ${t.descricao} - R$ ${Number(t.valor).toFixed(2)} (${dt})\n`;
+      }
+      msg += `\nAgora envie a foto/PDF do comprovante que eu anexo à transação mais recente.`;
+
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
+      break;
+    }
+
+    // ─── NEW: Create recurring bill ───
+    case "/nova_recorrencia": {
+      if (!argStr) {
+        await sendTelegram(chatId,
+          "Use: /nova\\_recorrencia [dados]\n\n" +
+          "Exemplo:\n/nova\\_recorrencia Internet Vivo R$ 130 vence dia 15 fixa boleto banco Itaú variável\n\n" +
+          "Se for variável, o bot perguntará o valor todo mês antes do vencimento.",
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      const recExtraction = await extractRecurrenceData(argStr, userId, supabase, lovableKey);
+      if (!recExtraction || recExtraction.status === "incomplete") {
+        await sendTelegram(chatId,
+          `❓ Faltam informações:\n${recExtraction?.missing || "Informe nome, valor estimado e dia de vencimento."}`,
+          lovableKey, telegramKey
+        );
+        break;
+      }
+
+      const recData: any = {
+        nome: recExtraction.nome,
+        valor_estimado: recExtraction.valor_estimado || 0,
+        dia_vencimento_padrao: recExtraction.dia_vencimento,
+        eh_variavel: recExtraction.eh_variavel || false,
+        origem: recExtraction.origem || null,
+        user_id: userId,
+      };
+
+      if (recExtraction.banco_ref) {
+        const { data: banco } = await supabase
+          .from("bancos")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("nome", `%${recExtraction.banco_ref}%`)
+          .limit(1)
+          .single();
+        if (banco) recData.banco_id = banco.id;
+      }
+
+      if (recExtraction.cartao_ref) {
+        const { data: cartao } = await supabase
+          .from("cartoes")
+          .select("id")
+          .eq("user_id", userId)
+          .or(`apelido.ilike.%${recExtraction.cartao_ref}%,final_cartao.eq.${recExtraction.cartao_ref}`)
+          .limit(1)
+          .single();
+        if (cartao) recData.cartao_id = cartao.id;
+      }
+
+      if (recExtraction.categoria_ref) {
+        const { data: cat } = await supabase
+          .from("categorias")
+          .select("id")
+          .eq("user_id", userId)
+          .ilike("nome", `%${recExtraction.categoria_ref}%`)
+          .limit(1)
+          .single();
+        if (cat) recData.categoria_id = cat.id;
+      }
+
+      const { error: recErr } = await supabase
+        .from("recorrencias_fixas")
+        .insert(recData);
+
+      if (recErr) {
+        await sendTelegram(chatId, `❌ Erro: ${recErr.message}`, lovableKey, telegramKey);
+      } else {
+        await sendTelegram(chatId,
+          `🔄 Recorrência cadastrada!\n\n` +
+          `📌 ${recData.nome}\n` +
+          `💰 Valor estimado: R$ ${Number(recData.valor_estimado).toFixed(2)}\n` +
+          `📅 Vencimento: dia ${recData.dia_vencimento_padrao}\n` +
+          `${recData.eh_variavel ? "📊 Variável — vou perguntar o valor todo mês" : "🔒 Valor fixo"}`,
+          lovableKey, telegramKey
+        );
+      }
+      break;
+    }
+
     default:
       await sendTelegram(chatId,
         "📋 *Comandos disponíveis:*\n\n" +
+        "💰 *Cadastro:*\n" +
+        "/nova\\_conta [dados] — Nova conta/transação\n" +
+        "/novo\\_banco [nome] [saldo] — Novo banco\n" +
+        "/novo\\_cartao [dados] — Novo cartão\n" +
+        "/nova\\_recorrencia [dados] — Nova conta fixa\n\n" +
+        "📊 *Consultas:*\n" +
         "/resumo — Gastos do mês atual\n" +
+        "/relatorio [mês] [ano] — Relatório mensal\n" +
         "/pendencias — Contas pendentes/atrasadas\n" +
         "/limite — Limites dos cartões\n" +
-        "/pix [nome] — Dados PIX de fornecedor\n" +
         "/buscar [termo] — Buscar no histórico\n" +
-        "/alterar\\_limite [cartão] [valor] — Alterar limite (Admin)",
+        "/pix [nome] — Dados PIX de fornecedor\n" +
+        "/anexar [nome] — Anexar comprovante\n\n" +
+        "⚙️ *Admin:*\n" +
+        "/alterar\\_limite [cartão] [valor] — Alterar limite",
         lovableKey, telegramKey, "Markdown"
       );
   }
 
   return jsonResponse({ ok: true });
+}
+
+// ─── CARD DATA EXTRACTION ───
+async function extractCardData(text: string, userId: string, supabase: any, apiKey: string) {
+  const response = await fetch(AI_GATEWAY, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content: `Extraia dados de um cartão de crédito/débito da mensagem. Campos obrigatórios: apelido, final_cartao (4 dígitos), bandeira (visa/mastercard/elo/amex), tipo_funcao (debito/credito/multiplo), dia_fechamento, dia_vencimento. Opcionais: limite_total, formato (fisico/virtual), data_validade (YYYY-MM-DD, primeiro dia do mês), banco_ref. Se faltar algum obrigatório, retorne status "incomplete" com campo missing.`,
+        },
+        { role: "user", content: text },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "extract_card",
+            description: "Extract card data from user message",
+            parameters: {
+              type: "object",
+              properties: {
+                status: { type: "string", enum: ["complete", "incomplete"] },
+                apelido: { type: "string" },
+                final_cartao: { type: "string" },
+                bandeira: { type: "string", enum: ["visa", "mastercard", "elo", "amex"] },
+                tipo_funcao: { type: "string", enum: ["debito", "credito", "multiplo"] },
+                formato: { type: "string", enum: ["fisico", "virtual"] },
+                limite_total: { type: "number" },
+                dia_fechamento: { type: "number" },
+                dia_vencimento: { type: "number" },
+                data_validade: { type: "string" },
+                banco_ref: { type: "string" },
+                missing: { type: "string" },
+              },
+              required: ["status"],
+            },
+          },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "extract_card" } },
+    }),
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) return null;
+  try { return JSON.parse(toolCall.function.arguments); } catch { return null; }
+}
+
+// ─── RECURRENCE DATA EXTRACTION ───
+async function extractRecurrenceData(text: string, userId: string, supabase: any, apiKey: string) {
+  const response = await fetch(AI_GATEWAY, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content: `Extraia dados de uma conta recorrente/fixa. Campos obrigatórios: nome, dia_vencimento (1-31). Opcionais: valor_estimado, eh_variavel (true se o valor muda todo mês como conta de luz), origem (email/site/pix/boleto/debito_automatico/dinheiro/cartao), banco_ref, cartao_ref, categoria_ref. Se faltar obrigatório, retorne status "incomplete" com campo missing.`,
+        },
+        { role: "user", content: text },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "extract_recurrence",
+            description: "Extract recurrence data from user message",
+            parameters: {
+              type: "object",
+              properties: {
+                status: { type: "string", enum: ["complete", "incomplete"] },
+                nome: { type: "string" },
+                valor_estimado: { type: "number" },
+                dia_vencimento: { type: "number" },
+                eh_variavel: { type: "boolean" },
+                origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
+                banco_ref: { type: "string" },
+                cartao_ref: { type: "string" },
+                categoria_ref: { type: "string" },
+                missing: { type: "string" },
+              },
+              required: ["status"],
+            },
+          },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "extract_recurrence" } },
+    }),
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) return null;
+  try { return JSON.parse(toolCall.function.arguments); } catch { return null; }
 }
 
 // ─── NLP EXTRACTION ───
