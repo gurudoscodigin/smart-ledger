@@ -55,7 +55,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
     await createTransaction.mutateAsync({
       descricao: simple.descricao,
       valor: simple.valor,
-      data_vencimento: simple.data_vencimento,
+      data_vencimento: simple.data_vencimento || new Date().toISOString().split("T")[0],
       categoria_tipo: simple.categoria_tipo,
       banco_id: simple.banco_id || null,
       cartao_id: simple.cartao_id || null,
