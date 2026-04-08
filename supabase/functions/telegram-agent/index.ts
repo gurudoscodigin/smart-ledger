@@ -129,6 +129,23 @@ Deno.serve(async (req) => {
 
       // If only a file (no text), try to match with pending transactions
       if (!processedText && fileUrl) {
+        // Check if there's pending context to link the file to the correct transaction
+        if (pendingContext && pendingContext.last_transaction_id) {
+          // Link to the specific transaction from pending context
+          await supabase.from("comprovantes").insert({
+            transacao_id: pendingContext.last_transaction_id,
+            file_path: fileUrl,
+            file_name: fileName!,
+            file_type: message.document?.mime_type || "image/jpeg",
+            uploaded_by: userId,
+          });
+          await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+          
+          const { data: linkedTx } = await supabase.from("transacoes").select("descricao, valor, data_vencimento").eq("id", pendingContext.last_transaction_id).single();
+          const dtStr = linkedTx ? (() => { const [y,m,d] = linkedTx.data_vencimento.split("-"); return `${d}/${m}/${y}`; })() : "";
+          await sendTelegram(chatId, `📎 Comprovante vinculado à conta:\n${linkedTx?.descricao || "?"} - R$ ${Number(linkedTx?.valor || 0).toFixed(2)} (${dtStr})`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true });
+        }
         return await handleOrphanFile(chatId, userId, fileUrl, fileName!, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
       }
     }
