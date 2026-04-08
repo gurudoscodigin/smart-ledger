@@ -162,24 +162,24 @@ export default function CardVault() {
           <div className="flex justify-center py-20">
             <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : !cartoes?.length ? (
+        ) : !cartoes?.length && !bancos?.length ? (
           <Card className="glass-card">
             <CardContent className="py-16 text-center">
               <CreditCard className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-muted-foreground">Nenhum cartão cadastrado</p>
-              <Button variant="outline" className="mt-4" onClick={() => setCreateOpen(true)}>Cadastrar primeiro cartão</Button>
+              <p className="text-muted-foreground">Nenhum banco ou cartão cadastrado</p>
+              <Button variant="outline" className="mt-4" onClick={() => setCreateBankOpen(true)}>Cadastrar primeiro banco</Button>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Bank-grouped cards */}
-            {Array.from(bankGroups.entries()).map(([bankId, { bank, cards }]) => {
-              const bankInfo = bancos?.find(b => b.id === bankId);
+            {/* All banks — with or without cards */}
+            {(bancos || []).map(bank => {
+              const cards = bankGroups.get(bank.id)?.cards || [];
               const faturaTotal = getBankFatura(cards);
-              const isOpen = expandedBanks.has(bankId);
+              const isOpen = expandedBanks.has(bank.id);
 
               return (
-                <Collapsible key={bankId} open={isOpen} onOpenChange={() => toggleBank(bankId)}>
+                <Collapsible key={bank.id} open={isOpen} onOpenChange={() => toggleBank(bank.id)}>
                   <Card className="glass-card">
                     <CollapsibleTrigger asChild>
                       <CardHeader className="cursor-pointer hover:bg-accent/30 transition-colors rounded-t-xl">
@@ -191,15 +191,17 @@ export default function CardVault() {
                             <div>
                               <CardTitle className="text-base font-medium">{bank.nome}</CardTitle>
                               <p className="text-xs text-muted-foreground">
-                                {cards.length} {cards.length === 1 ? "cartão" : "cartões"} · Saldo: R$ {Number(bankInfo?.saldo_atual || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                {cards.length} {cards.length === 1 ? "cartão" : "cartões"} · Saldo: R$ {Number(bank.saldo_atual).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                               </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-4">
-                            <div className="text-right">
-                              <p className="text-xs text-muted-foreground">Fatura atual</p>
-                              <p className="text-sm font-semibold">R$ {faturaTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
-                            </div>
+                            {cards.length > 0 && (
+                              <div className="text-right">
+                                <p className="text-xs text-muted-foreground">Fatura atual</p>
+                                <p className="text-sm font-semibold">R$ {faturaTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+                              </div>
+                            )}
                             {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                           </div>
                         </div>
@@ -207,9 +209,13 @@ export default function CardVault() {
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <CardContent className="pt-0">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {cards.map(renderCard)}
-                        </div>
+                        {cards.length > 0 ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {cards.map(renderCard)}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground text-center py-6">Nenhum cartão vinculado a este banco</p>
+                        )}
                       </CardContent>
                     </CollapsibleContent>
                   </Card>
