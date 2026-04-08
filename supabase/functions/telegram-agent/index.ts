@@ -14,6 +14,7 @@ Deno.serve(async (req) => {
     const text = message.text ?? "";
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+    const OPENAI_KEY = Deno.env.get("OPENIA_API_KEY")!;
     const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY")!;
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
