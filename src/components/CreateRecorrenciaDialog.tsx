@@ -52,7 +52,7 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
       dia_vencimento_padrao: form.dia_vencimento_padrao,
       cartao_id: form.cartao_id || undefined,
       banco_id: form.banco_id || undefined,
-      origem: form.origem || undefined,
+      origem: (form.origem as any) || undefined,
       categoria_id: form.categoria_id || undefined,
       url_site_login: form.url_site_login || undefined,
     });
