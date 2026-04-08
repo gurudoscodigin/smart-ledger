@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, FileCheck, Settings, LogOut, Lock, Trash2 } from "lucide-react";
+import { LayoutDashboard, CreditCard, FileCheck, Settings, LogOut, Lock, Trash2, Receipt } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,6 +17,7 @@ import {
 
 const items = [
   { title: "Command Center", url: "/", icon: LayoutDashboard },
+  { title: "Contas", url: "/bills", icon: Receipt },
   { title: "Card Vault", url: "/cards", icon: CreditCard },
   { title: "Auditor", url: "/auditor", icon: FileCheck },
   { title: "Control Center", url: "/settings", icon: Settings },
