@@ -418,6 +418,7 @@ export type Database = {
           chat_id: number
           created_at: string
           id: string
+          pending_context: Json | null
           processed: boolean
           raw_update: Json
           text: string | null
@@ -427,6 +428,7 @@ export type Database = {
           chat_id: number
           created_at?: string
           id?: string
+          pending_context?: Json | null
           processed?: boolean
           raw_update: Json
           text?: string | null
@@ -436,6 +438,7 @@ export type Database = {
           chat_id?: number
           created_at?: string
           id?: string
+          pending_context?: Json | null
           processed?: boolean
           raw_update?: Json
           text?: string | null
