@@ -8,6 +8,7 @@ import CommandCenter from "./pages/CommandCenter";
 import CardVault from "./pages/CardVault";
 import Auditor from "./pages/Auditor";
 import ControlCenter from "./pages/ControlCenter";
+import TrashPage from "./pages/TrashPage";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/cards" element={<ProtectedRoute><CardVault /></ProtectedRoute>} />
             <Route path="/auditor" element={<ProtectedRoute><Auditor /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><ControlCenter /></ProtectedRoute>} />
+            <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

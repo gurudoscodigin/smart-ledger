@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, FileCheck, Settings, LogOut, Lock } from "lucide-react";
+import { LayoutDashboard, CreditCard, FileCheck, Settings, LogOut, Lock, Trash2 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -62,6 +62,26 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Trash link - subtle, at bottom of nav */}
+        <SidebarGroup className="mt-auto">
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink
+                    to="/trash"
+                    className="hover:bg-accent/60 transition-colors text-muted-foreground"
+                    activeClassName="bg-accent text-foreground font-medium"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {!collapsed && <span>Lixeira</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

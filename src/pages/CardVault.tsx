@@ -2,23 +2,139 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Wifi, Zap, Plus, Trash2 } from "lucide-react";
+import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { useCartoes } from "@/hooks/useCartoes";
+import { useBancos } from "@/hooks/useBancos";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { CreateCardDialog } from "@/components/CreateCardDialog";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 export default function CardVault() {
   const { data: cartoes, isLoading, softDelete } = useCartoes();
+  const { data: bancos } = useBancos();
   const { data: txData } = useTransacoes();
   const { role } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [expandedBanks, setExpandedBanks] = useState<Set<string>>(new Set(["__unlinked"]));
 
-  // Group transactions by card for subscription timeline
+  const toggleBank = (bankId: string) => {
+    setExpandedBanks(prev => {
+      const next = new Set(prev);
+      next.has(bankId) ? next.delete(bankId) : next.add(bankId);
+      return next;
+    });
+  };
+
+  // Group cards by bank
+  const bankGroups = new Map<string, { bank: any; cards: any[] }>();
+  const unlinkedCards: any[] = [];
+
+  (cartoes || []).forEach(card => {
+    if (card.banco_id && (card as any).bancos) {
+      const existing = bankGroups.get(card.banco_id);
+      if (existing) {
+        existing.cards.push(card);
+      } else {
+        bankGroups.set(card.banco_id, { bank: (card as any).bancos, cards: [card] });
+      }
+    } else {
+      unlinkedCards.push(card);
+    }
+  });
+
+  // Calculate bank-level aggregates
+  const getBankFatura = (cards: any[]) => {
+    const cardIds = cards.map(c => c.id);
+    const monthTxs = (txData?.currentMonth || []).filter(t => t.cartao_id && cardIds.includes(t.cartao_id));
+    return monthTxs.reduce((sum, t) => sum + Number(t.valor), 0);
+  };
+
+  // Check for expiring virtual cards (30 days)
+  const isExpiringSoon = (card: any) => {
+    if (!card.data_validade || card.formato !== "virtual") return false;
+    const expiry = new Date(card.data_validade);
+    const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / 86400000);
+    return daysLeft > 0 && daysLeft <= 30;
+  };
+
   const cardTransactions = (txData?.currentMonth || []).filter(t => t.cartao_id);
+
+  const renderCard = (card: any) => {
+    const used = Number(card.limite_total) - Number(card.limite_disponivel);
+    const usedPct = card.limite_total > 0 ? (used / Number(card.limite_total)) * 100 : 0;
+    const barColor = usedPct > 80 ? "bg-status-late" : usedPct > 60 ? "bg-primary" : "bg-status-paid";
+    const expiring = isExpiringSoon(card);
+
+    return (
+      <Card key={card.id} className={`glass-card overflow-hidden ${expiring ? "ring-1 ring-primary/40" : ""}`}>
+        <CardContent className="pt-6">
+          <div className="relative bg-gradient-to-br from-accent to-muted rounded-xl p-6 mb-6">
+            {expiring && (
+              <div className="absolute top-2 right-2">
+                <Badge variant="secondary" className="text-[10px] bg-primary/20 text-primary gap-1">
+                  <AlertCircle className="w-3 h-3" /> Expira em breve
+                </Badge>
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-8">
+              <span className="text-sm font-medium text-foreground">{card.apelido}</span>
+              <div className="flex gap-2 items-center">
+                <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
+                  {card.formato === "virtual"
+                    ? <><Zap className="w-3 h-3 mr-1" />Virtual</>
+                    : <><Wifi className="w-3 h-3 mr-1" />Físico</>
+                  }
+                </Badge>
+                {card.id_cartao_pai && (
+                  <Badge variant="outline" className="text-[10px]">Adicional</Badge>
+                )}
+                {role === "admin" && (
+                  <button onClick={() => setDeleteId(card.id)} className="text-muted-foreground hover:text-destructive">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Final</p>
+                <p className="text-lg font-mono font-semibold tracking-widest">•••• {card.final_cartao}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground font-medium capitalize">{card.bandeira}</p>
+                <p className="text-[10px] text-muted-foreground capitalize">{card.tipo_funcao}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Limite utilizado</span>
+              <span className="font-medium">
+                R$ {used.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} / R$ {Number(card.limite_total).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="h-2 bg-accent rounded-full overflow-hidden">
+              <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(usedPct, 100)}%` }} />
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Disponível: R$ {Number(card.limite_disponivel).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+              <span>Fecha dia {card.dia_fechamento} · Vence dia {card.dia_vencimento}</span>
+            </div>
+            {card.data_validade && (
+              <p className="text-[10px] text-muted-foreground">
+                Validade: {new Date(card.data_validade).toLocaleDateString("pt-BR")}
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <DashboardLayout>
@@ -48,64 +164,86 @@ export default function CardVault() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {cartoes.map((card) => {
-              const used = Number(card.limite_total) - Number(card.limite_disponivel);
-              const usedPct = card.limite_total > 0 ? (used / Number(card.limite_total)) * 100 : 0;
-              const barColor = usedPct > 80 ? "bg-status-late" : usedPct > 60 ? "bg-primary" : "bg-status-paid";
+          <div className="space-y-6">
+            {/* Bank-grouped cards */}
+            {Array.from(bankGroups.entries()).map(([bankId, { bank, cards }]) => {
+              const bankInfo = bancos?.find(b => b.id === bankId);
+              const faturaTotal = getBankFatura(cards);
+              const isOpen = expandedBanks.has(bankId);
 
               return (
-                <Card key={card.id} className="glass-card overflow-hidden">
-                  <CardContent className="pt-6">
-                    <div className="relative bg-gradient-to-br from-accent to-muted rounded-xl p-6 mb-6">
-                      <div className="flex items-center justify-between mb-8">
-                        <span className="text-sm font-medium text-foreground">{card.apelido}</span>
-                        <div className="flex gap-2 items-center">
-                          <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-                            {card.formato === "virtual" ? <><Zap className="w-3 h-3 mr-1" />Virtual</> : <><Wifi className="w-3 h-3 mr-1" />Físico</>}
-                          </Badge>
-                          {role === "admin" && (
-                            <button onClick={() => setDeleteId(card.id)} className="text-muted-foreground hover:text-destructive">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                <Collapsible key={bankId} open={isOpen} onOpenChange={() => toggleBank(bankId)}>
+                  <Card className="glass-card">
+                    <CollapsibleTrigger asChild>
+                      <CardHeader className="cursor-pointer hover:bg-accent/30 transition-colors rounded-t-xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                              <Building2 className="w-5 h-5 text-primary" />
+                            </div>
+                            <div>
+                              <CardTitle className="text-base font-medium">{bank.nome}</CardTitle>
+                              <p className="text-xs text-muted-foreground">
+                                {cards.length} {cards.length === 1 ? "cartão" : "cartões"} · Saldo: R$ {Number(bankInfo?.saldo_atual || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="text-right">
+                              <p className="text-xs text-muted-foreground">Fatura atual</p>
+                              <p className="text-sm font-semibold">R$ {faturaTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+                            </div>
+                            {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Final</p>
-                          <p className="text-lg font-mono font-semibold tracking-widest">•••• {card.final_cartao}</p>
+                      </CardHeader>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <CardContent className="pt-0">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {cards.map(renderCard)}
                         </div>
-                        <div className="text-right">
-                          <p className="text-xs text-muted-foreground font-medium capitalize">{card.bandeira}</p>
-                          <p className="text-[10px] text-muted-foreground capitalize">{card.tipo_funcao}</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Limite utilizado</span>
-                        <span className="font-medium">
-                          R$ {used.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} / R$ {Number(card.limite_total).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="h-2 bg-accent rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(usedPct, 100)}%` }} />
-                      </div>
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Disponível: R$ {Number(card.limite_disponivel).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-                        <span>Fecha dia {card.dia_fechamento} · Vence dia {card.dia_vencimento}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                      </CardContent>
+                    </CollapsibleContent>
+                  </Card>
+                </Collapsible>
               );
             })}
+
+            {/* Unlinked cards */}
+            {unlinkedCards.length > 0 && (
+              <Collapsible open={expandedBanks.has("__unlinked")} onOpenChange={() => toggleBank("__unlinked")}>
+                <Card className="glass-card">
+                  <CollapsibleTrigger asChild>
+                    <CardHeader className="cursor-pointer hover:bg-accent/30 transition-colors rounded-t-xl">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                            <CreditCard className="w-5 h-5 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base font-medium">Sem Banco Vinculado</CardTitle>
+                            <p className="text-xs text-muted-foreground">{unlinkedCards.length} {unlinkedCards.length === 1 ? "cartão" : "cartões"}</p>
+                          </div>
+                        </div>
+                        {expandedBanks.has("__unlinked") ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                      </div>
+                    </CardHeader>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {unlinkedCards.map(renderCard)}
+                      </div>
+                    </CardContent>
+                  </CollapsibleContent>
+                </Card>
+              </Collapsible>
+            )}
           </div>
         )}
 
-        {/* Subscription timeline from real transactions */}
+        {/* Card transactions */}
         {cardTransactions.length > 0 && (
           <Card className="glass-card">
             <CardHeader>
@@ -122,7 +260,7 @@ export default function CardVault() {
                       <div>
                         <p className="text-sm font-medium">{tx.descricao}</p>
                         <p className="text-xs text-muted-foreground">
-                          {tx.cartoes?.apelido} · {tx.parcela_atual && `${tx.parcela_atual}/${tx.parcela_total}`}
+                          {(tx as any).cartoes?.apelido} · {tx.parcela_atual && `${tx.parcela_atual}/${tx.parcela_total}`}
                         </p>
                       </div>
                     </div>
@@ -146,7 +284,6 @@ export default function CardVault() {
 
       <CreateCardDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      {/* Delete confirmation */}
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
