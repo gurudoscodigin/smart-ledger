@@ -271,6 +271,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: false, error: txErr.message });
     }
 
+    // Store last transaction ID in pending context for receipt linking
+    await supabase
+      .from("telegram_messages")
+      .update({ pending_context: { last_transaction_id: newTx.id } })
+      .eq("update_id", update.update_id);
+
     // Link file if present
     if (fileUrl && newTx) {
       await supabase.from("comprovantes").insert({
