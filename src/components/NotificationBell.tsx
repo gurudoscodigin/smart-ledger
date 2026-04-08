@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Bell, Check, CheckCheck, AlertTriangle, Clock, FileWarning, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useNotificacoes, Notificacao } from "@/hooks/useNotificacoes";
 
@@ -31,7 +30,7 @@ export function NotificationBell() {
         <Button variant="ghost" size="icon" className="relative">
           <Bell className="w-5 h-5" />
           {count > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4.5 h-4.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center min-w-[18px] h-[18px]">
+            <span className="absolute -top-0.5 -right-0.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center min-w-[18px] h-[18px]">
               {count > 9 ? "9+" : count}
             </span>
           )}

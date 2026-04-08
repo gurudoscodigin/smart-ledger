@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, Landmark, TrendingUp } from "lucide-react";
+import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, Landmark, TrendingUp, AlertTriangle, Clock, Check } from "lucide-react";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { useRecorrencias } from "@/hooks/useRecorrencias";
@@ -62,12 +62,23 @@ export default function BillsPage() {
   const [recOpen, setRecOpen] = useState(false);
   const [avulsaOpen, setAvulsaOpen] = useState(false);
   const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
-  const { data: txData, isLoading: txLoading } = useTransacoes();
+  const { data: txData, isLoading: txLoading, payTransaction } = useTransacoes();
 
-  const avulsas = (txData?.currentMonth || []).filter(t => t.categoria_tipo === "avulsa");
-  const variaveis = (txData?.currentMonth || []).filter(t => t.categoria_tipo === "variavel");
-  const dividas = (txData?.currentMonth || []).filter(t => t.categoria_tipo === "divida");
-  const nonFixa = [...avulsas, ...variaveis, ...dividas];
+  const allTxs = txData?.currentMonth || [];
+  const overdue = txData?.overdue || [];
+  const avulsas = allTxs.filter(t => t.categoria_tipo === "avulsa");
+  const variaveis = allTxs.filter(t => t.categoria_tipo === "variavel");
+  const dividas = allTxs.filter(t => t.categoria_tipo === "divida");
+
+  // Alert sections: upcoming (next 48h) and overdue
+  const now = new Date();
+  const twoDaysMs = 2 * 86400000;
+  const upcomingDue = allTxs.filter(t => {
+    if (t.status !== "pendente") return false;
+    const dueDate = new Date(t.data_vencimento);
+    const diff = dueDate.getTime() - now.getTime();
+    return diff > 0 && diff <= twoDaysMs;
+  });
 
   const renderTxList = (items: any[], emptyIcon: any, emptyMsg: string) => {
     if (txLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
@@ -120,6 +131,12 @@ export default function BillsPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
+                  {tx.status !== "pago" && (
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                      onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                      <Check className="w-3 h-3" /> Pagar
+                    </Button>
+                  )}
                   <AttachSection transacaoId={tx.id} />
                 </div>
               </div>
@@ -139,6 +156,63 @@ export default function BillsPage() {
             <p className="text-muted-foreground text-sm mt-1">Gerencie contas fixas, variáveis e avulsas</p>
           </div>
         </div>
+
+        {/* Alert Banners */}
+        {(overdue.length > 0 || upcomingDue.length > 0) && (
+          <div className="space-y-3">
+            {overdue.length > 0 && (
+              <Card className="border-status-late/30 bg-status-late/5">
+                <CardContent className="py-3 px-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="w-4 h-4 text-status-late" />
+                    <span className="text-sm font-semibold text-status-late">{overdue.length} conta(s) atrasada(s)</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {overdue.slice(0, 5).map((tx: any) => (
+                      <div key={tx.id} className="flex items-center justify-between text-sm">
+                        <span className="truncate">{tx.descricao}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                          <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
+                          <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
+                            onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                            <Check className="w-3 h-3" /> Pagar
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {upcomingDue.length > 0 && (
+              <Card className="border-status-pending/30 bg-status-pending/5">
+                <CardContent className="py-3 px-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-4 h-4 text-status-pending" />
+                    <span className="text-sm font-semibold text-status-pending">{upcomingDue.length} conta(s) vencendo em 48h</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {upcomingDue.slice(0, 5).map((tx: any) => (
+                      <div key={tx.id} className="flex items-center justify-between text-sm">
+                        <span className="truncate">{tx.descricao}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                          <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
+                          <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
+                            onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                            <Check className="w-3 h-3" /> Pagar
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
 
         <Tabs defaultValue="fixas">
           <TabsList>
@@ -171,7 +245,7 @@ export default function BillsPage() {
                           <div className="flex items-center gap-2">
                             <p className="font-medium text-sm truncate">{rec.nome}</p>
                             {rec.eh_variavel && (
-                              <Badge variant="outline" className="text-[10px] gap-1 border-status-overdue/30 text-status-overdue">
+                              <Badge variant="outline" className="text-[10px] gap-1 border-status-pending/30 text-status-pending">
                                 <ToggleRight className="w-3 h-3" /> Variável
                               </Badge>
                             )}

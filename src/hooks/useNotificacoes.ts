@@ -21,7 +21,7 @@ export function useNotificacoes() {
   const query = useQuery({
     queryKey: ["notificacoes"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("notificacoes")
         .select("*")
         .eq("user_id", user!.id)
@@ -32,12 +32,12 @@ export function useNotificacoes() {
       return (data || []) as Notificacao[];
     },
     enabled: !!user,
-    refetchInterval: 30000, // poll every 30s
+    refetchInterval: 30000,
   });
 
   const markRead = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("notificacoes")
         .update({ lida: true })
         .eq("id", id);
@@ -48,7 +48,7 @@ export function useNotificacoes() {
 
   const markAllRead = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("notificacoes")
         .update({ lida: true })
         .eq("user_id", user!.id)
