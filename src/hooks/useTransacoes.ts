@@ -175,6 +175,21 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
   });
 
   // Pay transaction — releases card limit if card-linked
+  const updateTransaction = useMutation({
+    mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; status?: string; categoria_tipo?: string; origem?: string; banco_id?: string | null; cartao_id?: string | null }) => {
+      const { error } = await supabase
+        .from("transacoes")
+        .update(updates)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      toast.success("Transação atualizada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const payTransaction = useMutation({
     mutationFn: async (txId: string) => {
       const { data: tx, error: fetchErr } = await supabase
