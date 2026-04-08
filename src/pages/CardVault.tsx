@@ -2,7 +2,9 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark, ChevronLeft, ChevronRight, Pencil, Check, X } from "lucide-react";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
 import { useTransacoes } from "@/hooks/useTransacoes";
@@ -12,16 +14,27 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 export default function CardVault() {
   const { data: cartoes, isLoading, softDelete } = useCartoes();
   const { data: bancos } = useBancos();
-  const { data: txData } = useTransacoes();
   const { role } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [createBankOpen, setCreateBankOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedBanks, setExpandedBanks] = useState<Set<string>>(new Set(["__unlinked"]));
+  const [editingTx, setEditingTx] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ descricao: "", valor: "" });
+
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const { data: txData, updateTransaction } = useTransacoes({ month, year });
+
+  const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
+  const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
 
   const toggleBank = (bankId: string) => {
     setExpandedBanks(prev => {
@@ -31,31 +44,23 @@ export default function CardVault() {
     });
   };
 
-  // Group cards by bank
   const bankGroups = new Map<string, { bank: any; cards: any[] }>();
   const unlinkedCards: any[] = [];
 
   (cartoes || []).forEach(card => {
     if (card.banco_id && (card as any).bancos) {
       const existing = bankGroups.get(card.banco_id);
-      if (existing) {
-        existing.cards.push(card);
-      } else {
-        bankGroups.set(card.banco_id, { bank: (card as any).bancos, cards: [card] });
-      }
-    } else {
-      unlinkedCards.push(card);
-    }
+      if (existing) { existing.cards.push(card); }
+      else { bankGroups.set(card.banco_id, { bank: (card as any).bancos, cards: [card] }); }
+    } else { unlinkedCards.push(card); }
   });
 
-  // Calculate bank-level aggregates
   const getBankFatura = (cards: any[]) => {
     const cardIds = cards.map(c => c.id);
     const monthTxs = (txData?.currentMonth || []).filter(t => t.cartao_id && cardIds.includes(t.cartao_id));
     return monthTxs.reduce((sum, t) => sum + Number(t.valor), 0);
   };
 
-  // Check for expiring virtual cards (30 days)
   const isExpiringSoon = (card: any) => {
     if (!card.data_validade || card.formato !== "virtual") return false;
     const expiry = new Date(card.data_validade);
@@ -64,6 +69,16 @@ export default function CardVault() {
   };
 
   const cardTransactions = (txData?.currentMonth || []).filter(t => t.cartao_id);
+
+  const startEdit = (tx: any) => {
+    setEditingTx(tx.id);
+    setEditForm({ descricao: tx.descricao, valor: String(tx.valor) });
+  };
+
+  const saveEdit = async (txId: string) => {
+    await updateTransaction.mutateAsync({ id: txId, descricao: editForm.descricao, valor: Number(editForm.valor) });
+    setEditingTx(null);
+  };
 
   const renderCard = (card: any) => {
     const used = Number(card.limite_total) - Number(card.limite_disponivel);
@@ -86,14 +101,9 @@ export default function CardVault() {
               <span className="text-sm font-medium text-foreground">{card.apelido}</span>
               <div className="flex gap-2 items-center">
                 <Badge variant="secondary" className="text-[10px] uppercase tracking-wider">
-                  {card.formato === "virtual"
-                    ? <><Zap className="w-3 h-3 mr-1" />Virtual</>
-                    : <><Wifi className="w-3 h-3 mr-1" />Físico</>
-                  }
+                  {card.formato === "virtual" ? <><Zap className="w-3 h-3 mr-1" />Virtual</> : <><Wifi className="w-3 h-3 mr-1" />Físico</>}
                 </Badge>
-                {card.id_cartao_pai && (
-                  <Badge variant="outline" className="text-[10px]">Adicional</Badge>
-                )}
+                {card.id_cartao_pai && <Badge variant="outline" className="text-[10px]">Adicional</Badge>}
                 {role === "admin" && (
                   <button onClick={() => setDeleteId(card.id)} className="text-muted-foreground hover:text-destructive">
                     <Trash2 className="w-3.5 h-3.5" />
@@ -112,7 +122,6 @@ export default function CardVault() {
               </div>
             </div>
           </div>
-
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Limite utilizado</span>
@@ -128,9 +137,7 @@ export default function CardVault() {
               <span>Fecha dia {card.dia_fechamento} · Vence dia {card.dia_vencimento}</span>
             </div>
             {card.data_validade && (
-              <p className="text-[10px] text-muted-foreground">
-                Validade: {new Date(card.data_validade).toLocaleDateString("pt-BR")}
-              </p>
+              <p className="text-[10px] text-muted-foreground">Validade: {new Date(card.data_validade).toLocaleDateString("pt-BR")}</p>
             )}
           </div>
         </CardContent>
@@ -159,9 +166,7 @@ export default function CardVault() {
         </div>
 
         {isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          </div>
+          <div className="flex justify-center py-20"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
         ) : !cartoes?.length && !bancos?.length ? (
           <Card className="glass-card">
             <CardContent className="py-16 text-center">
@@ -172,12 +177,10 @@ export default function CardVault() {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* All banks — with or without cards */}
             {(bancos || []).map(bank => {
               const cards = bankGroups.get(bank.id)?.cards || [];
               const faturaTotal = getBankFatura(cards);
               const isOpen = expandedBanks.has(bank.id);
-
               return (
                 <Collapsible key={bank.id} open={isOpen} onOpenChange={() => toggleBank(bank.id)}>
                   <Card className="glass-card">
@@ -185,9 +188,7 @@ export default function CardVault() {
                       <CardHeader className="cursor-pointer hover:bg-accent/30 transition-colors rounded-t-xl">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                              <Building2 className="w-5 h-5 text-primary" />
-                            </div>
+                            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center"><Building2 className="w-5 h-5 text-primary" /></div>
                             <div>
                               <CardTitle className="text-base font-medium">{bank.nome}</CardTitle>
                               <p className="text-xs text-muted-foreground">
@@ -210,9 +211,7 @@ export default function CardVault() {
                     <CollapsibleContent>
                       <CardContent className="pt-0">
                         {cards.length > 0 ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {cards.map(renderCard)}
-                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{cards.map(renderCard)}</div>
                         ) : (
                           <p className="text-sm text-muted-foreground text-center py-6">Nenhum cartão vinculado a este banco</p>
                         )}
@@ -223,7 +222,6 @@ export default function CardVault() {
               );
             })}
 
-            {/* Unlinked cards */}
             {unlinkedCards.length > 0 && (
               <Collapsible open={expandedBanks.has("__unlinked")} onOpenChange={() => toggleBank("__unlinked")}>
                 <Card className="glass-card">
@@ -231,9 +229,7 @@ export default function CardVault() {
                     <CardHeader className="cursor-pointer hover:bg-accent/30 transition-colors rounded-t-xl">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
-                            <CreditCard className="w-5 h-5 text-muted-foreground" />
-                          </div>
+                          <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center"><CreditCard className="w-5 h-5 text-muted-foreground" /></div>
                           <div>
                             <CardTitle className="text-base font-medium">Sem Banco Vinculado</CardTitle>
                             <p className="text-xs text-muted-foreground">{unlinkedCards.length} {unlinkedCards.length === 1 ? "cartão" : "cartões"}</p>
@@ -245,9 +241,7 @@ export default function CardVault() {
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <CardContent className="pt-0">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {unlinkedCards.map(renderCard)}
-                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{unlinkedCards.map(renderCard)}</div>
                     </CardContent>
                   </CollapsibleContent>
                 </Card>
@@ -256,43 +250,66 @@ export default function CardVault() {
           </div>
         )}
 
-        {/* Card transactions */}
-        {cardTransactions.length > 0 && (
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-base font-medium">Transações em Cartão — Mês Atual</CardTitle>
-            </CardHeader>
-            <CardContent>
+        {/* Card transactions with month navigation */}
+        <Card className="glass-card">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-medium">Transações em Cartão</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
+                <span className="text-sm font-medium min-w-[140px] text-center">{meses[month - 1]} {year}</span>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {cardTransactions.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">Nenhuma transação em cartão neste mês</p>
+            ) : (
               <div className="space-y-1">
                 {cardTransactions.map((tx) => (
                   <div key={tx.id} className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
-                        <CreditCard className="w-4 h-4 text-muted-foreground" />
+                    {editingTx === tx.id ? (
+                      <div className="flex-1 flex items-center gap-2">
+                        <Input className="h-8 text-sm" value={editForm.descricao} onChange={e => setEditForm(f => ({ ...f, descricao: e.target.value }))} />
+                        <CurrencyInput className="h-8 text-sm w-28" value={editForm.valor} onValueChange={v => setEditForm(f => ({ ...f, valor: v }))} />
+                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => saveEdit(tx.id)}><Check className="w-4 h-4 text-status-paid" /></Button>
+                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingTx(null)}><X className="w-4 h-4 text-destructive" /></Button>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium">{tx.descricao}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {(tx as any).cartoes?.apelido} · {tx.parcela_atual && `${tx.parcela_atual}/${tx.parcela_total}`}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium">R$ {Number(tx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-                      <Badge variant="secondary" className={
-                        tx.status === "pago" ? "bg-status-paid/10 text-status-paid text-xs" :
-                        tx.status === "atrasado" ? "bg-status-late/10 text-status-late text-xs" :
-                        "bg-status-pending/10 text-status-pending text-xs"
-                      }>
-                        {tx.status === "pago" ? "Pago" : tx.status === "atrasado" ? "Atrasado" : "Pendente"}
-                      </Badge>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
+                            <CreditCard className="w-4 h-4 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">{tx.descricao}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {(tx as any).cartoes?.apelido} · {tx.parcela_atual && `${tx.parcela_atual}/${tx.parcela_total}`}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">R$ {Number(tx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                          <Badge variant="secondary" className={
+                            tx.status === "pago" ? "bg-status-paid/10 text-status-paid text-xs" :
+                            tx.status === "atrasado" ? "bg-status-late/10 text-status-late text-xs" :
+                            "bg-status-pending/10 text-status-pending text-xs"
+                          }>
+                            {tx.status === "pago" ? "Pago" : tx.status === "atrasado" ? "Atrasado" : "Pendente"}
+                          </Badge>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => startEdit(tx)}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <CreateCardDialog open={createOpen} onOpenChange={setCreateOpen} />
