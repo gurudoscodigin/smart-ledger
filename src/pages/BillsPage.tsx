@@ -77,8 +77,8 @@ export default function BillsPage() {
   const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
   const { data: txData, isLoading: txLoading } = useTransacoes();
 
-  // Avulsa = transactions with categoria_tipo "avulsa"
-  const avulsas = (txData?.currentMonth || []).filter(t => t.categoria_tipo === "avulsa");
+  // All non-fixa transactions (avulsa, divida, variavel)
+  const avulsas = (txData?.currentMonth || []).filter(t => t.categoria_tipo !== "fixa");
 
   return (
     <DashboardLayout>
