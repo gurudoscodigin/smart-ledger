@@ -250,7 +250,8 @@ async function handleCommand(
   userRole: string,
   supabase: any,
   lovableKey: string,
-  telegramKey: string
+  telegramKey: string,
+  openaiKey: string
 ) {
   const [cmd, ...args] = text.split(" ");
   const argStr = args.join(" ").trim();
@@ -488,7 +489,7 @@ async function handleCommand(
         break;
       }
 
-      const cardExtraction = await extractCardData(argStr, userId, supabase, lovableKey);
+      const cardExtraction = await extractCardData(argStr, userId, supabase, openaiKey);
       if (!cardExtraction || cardExtraction.status === "incomplete") {
         await sendTelegram(chatId,
           `❓ Faltam informações do cartão:\n${cardExtraction?.missing || "Envie todos os dados necessários."}`,
@@ -555,7 +556,7 @@ async function handleCommand(
         break;
       }
       // Delegate to NLP extraction (same flow as natural language)
-      const txExtraction = await extractTransactionData(argStr, userId, supabase, lovableKey);
+      const txExtraction = await extractTransactionData(argStr, userId, supabase, openaiKey);
       if (!txExtraction || txExtraction.status === "not_financial") {
         await sendTelegram(chatId, "❌ Não consegui identificar os dados da conta. Tente novamente com mais detalhes.", lovableKey, telegramKey);
         break;
@@ -782,7 +783,7 @@ async function handleCommand(
         break;
       }
 
-      const recExtraction = await extractRecurrenceData(argStr, userId, supabase, lovableKey);
+      const recExtraction = await extractRecurrenceData(argStr, userId, supabase, openaiKey);
       if (!recExtraction || recExtraction.status === "incomplete") {
         await sendTelegram(chatId,
           `❓ Faltam informações:\n${recExtraction?.missing || "Informe nome, valor estimado e dia de vencimento."}`,
