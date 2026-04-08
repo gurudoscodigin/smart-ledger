@@ -3,7 +3,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DollarSign, TrendingDown, TrendingUp, Clock, FileText, Plus, Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { DollarSign, TrendingDown, TrendingUp, Clock, FileText, Plus, Check, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
@@ -112,9 +112,7 @@ export default function CommandCenter() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
-                    {isCurrentMonth ? "Saldo em Conta" : "Saldo Atual"}
-                  </p>
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Saldo Total</p>
                   <p className="text-2xl font-semibold mt-1">
                     R$ {saldoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
@@ -158,6 +156,25 @@ export default function CommandCenter() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Bank Balances */}
+        {(bancos || []).length > 1 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {(bancos || []).map(bank => (
+              <Card key={bank.id} className="glass-card">
+                <CardContent className="py-4 px-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Landmark className="w-3.5 h-3.5 text-primary" />
+                    <p className="text-xs text-muted-foreground font-medium truncate">{bank.nome}</p>
+                  </div>
+                  <p className="text-base font-semibold tabular-nums">
+                    R$ {Number(bank.saldo_atual).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Burn Rate Chart */}
