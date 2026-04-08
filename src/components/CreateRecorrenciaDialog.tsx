@@ -15,13 +15,6 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const CATEGORIAS_PADRAO = [
-  { label: "Software", value: "software" },
-  { label: "Contas do Escritório", value: "contas_escritorio" },
-  { label: "Prestação de Serviços", value: "prestacao_servicos" },
-  { label: "Colaboradores", value: "colaboradores" },
-  { label: "Marketing", value: "marketing" },
-];
 
 export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
   const { create } = useRecorrencias();
@@ -197,9 +190,6 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
               <SelectContent>
                 {(categorias || []).map(c => (
                   <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
-                ))}
-                {CATEGORIAS_PADRAO.map(c => (
-                  <SelectItem key={c.value} value={c.value} disabled>{c.label} (criar primeiro)</SelectItem>
                 ))}
               </SelectContent>
             </Select>
