@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBancos } from "@/hooks/useBancos";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 interface Props {
   open: boolean;
@@ -12,13 +13,13 @@ interface Props {
 
 export function CreateBankDialog({ open, onOpenChange }: Props) {
   const { create } = useBancos();
-  const [form, setForm] = useState({ nome: "", saldo_atual: 0 });
+  const [form, setForm] = useState({ nome: "", saldo_atual: "" });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await create.mutateAsync(form);
+    await create.mutateAsync({ nome: form.nome, saldo_atual: Number(form.saldo_atual) || 0 });
     onOpenChange(false);
-    setForm({ nome: "", saldo_atual: 0 });
+    setForm({ nome: "", saldo_atual: "" });
   };
 
   return (
@@ -39,13 +40,10 @@ export function CreateBankDialog({ open, onOpenChange }: Props) {
           </div>
           <div>
             <Label>Saldo Atual (R$)</Label>
-            <Input
-              type="number"
-              min={0}
-              step={0.01}
-              value={form.saldo_atual || ""}
-              onChange={e => setForm(f => ({ ...f, saldo_atual: Number(e.target.value) }))}
-              placeholder="0,00"
+            <CurrencyInput
+              value={form.saldo_atual}
+              onValueChange={v => setForm(f => ({ ...f, saldo_atual: v }))}
+              placeholder="0.00"
             />
           </div>
           <Button type="submit" className="w-full" disabled={create.isPending}>
