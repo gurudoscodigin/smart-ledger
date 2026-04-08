@@ -4,6 +4,12 @@ const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
 const AI_GATEWAY = "https://api.openai.com/v1/chat/completions";
 const AI_MODEL = "gpt-4o-mini";
 
+// Subcategorias por categoria
+const SUBCATEGORIAS: Record<string, string[]> = {
+  "Marketing": ["Influencer", "UGC", "Tráfego Pago"],
+  "Colaboradores": ["PJ", "Colaborador Fixo"],
+};
+
 function getRequiredEnv(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`${name} not configured`);
@@ -51,7 +57,6 @@ Deno.serve(async (req) => {
 
     // ─── COMMAND ROUTING ───
     if (text.startsWith("/")) {
-      // Clear pending context on command
       await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
       return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
     }
@@ -88,7 +93,6 @@ Deno.serve(async (req) => {
         : message.document.file_id;
       fileName = message.document?.file_name || `comprovante_${Date.now()}.jpg`;
 
-      // Download file
       const fileResponse = await fetch(`${GATEWAY_URL}/getFile`, {
         method: "POST",
         headers: {
@@ -113,7 +117,6 @@ Deno.serve(async (req) => {
           const fileBytes = new Uint8Array(await downloadResp.arrayBuffer());
           const storagePath = `${userId}/${new Date().toISOString().split("T")[0]}_${fileName}`;
 
-          // Upload to Supabase Storage
           const { error: uploadErr } = await supabase.storage
             .from("comprovantes")
             .upload(storagePath, fileBytes, {
@@ -129,9 +132,7 @@ Deno.serve(async (req) => {
 
       // If only a file (no text), try to match with pending transactions
       if (!processedText && fileUrl) {
-        // Check if there's pending context to link the file to the correct transaction
         if (pendingContext && pendingContext.last_transaction_id) {
-          // Link to the specific transaction from pending context
           await supabase.from("comprovantes").insert({
             transacao_id: pendingContext.last_transaction_id,
             file_path: fileUrl,
@@ -150,188 +151,535 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ─── NLP: Extract transaction data via AI ───
-    // If there's pending context, merge previous partial data with new answer
-    let enrichedText = processedText;
+    // ─── HANDLE PENDING CONTEXT RESPONSES ───
     if (pendingContext) {
-      enrichedText = `Contexto anterior: Descrição="${pendingContext.descricao || ""}", Valor=${pendingContext.valor || "?"}, Data=${pendingContext.data_vencimento || "?"}, Categoria=${pendingContext.categoria_tipo || "?"}, Origem=${pendingContext.origem || "?"}, Cartão=${pendingContext.cartao_ref || "?"}, Banco=${pendingContext.banco_ref || "?"}, Status=${pendingContext.status_pagamento || "pendente"}. Pergunta feita: "${pendingContext.missing_question || ""}". Resposta do usuário: "${processedText}". Combine tudo e complete os dados.`;
-      // Clear pending context
-      await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
-    }
+      const step = pendingContext.step || "extraction";
 
-    const extraction = await extractTransactionData(enrichedText, userId, supabase, OPENAI_KEY);
-
-    if (!extraction || extraction.status === "not_financial") {
-      if (pendingContext) {
-        // Retry: treat the original context + answer as a direct re-extraction
-        const fallbackExtraction = await extractTransactionData(
-          `${pendingContext.descricao || ""}, ${pendingContext.valor || ""} reais, vence ${pendingContext.data_vencimento || processedText}`,
-          userId, supabase, OPENAI_KEY
-        );
-        if (fallbackExtraction && fallbackExtraction.status === "complete") {
-          // Use fallback and continue to create transaction (handled below via goto-like pattern)
-          Object.assign(extraction || {}, fallbackExtraction);
+      // Step: waiting for recurrence answer
+      if (step === "ask_recurrence") {
+        const isRecurrent = /mensal|recorrente|todo\s*m[eê]s|fixa|sim/i.test(processedText);
+        const updatedCtx = { ...pendingContext, step: "ask_variable" };
+        
+        if (isRecurrent) {
+          updatedCtx.is_recorrente = true;
+          // Ask if fixed or variable value
+          await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+          await sendTelegram(chatId, `📊 O valor de "${pendingContext.descricao}" é:\n\n1️⃣ Fixo (mesmo valor todo mês)\n2️⃣ Variável (muda todo mês, ex: conta de luz)`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true });
+        } else {
+          updatedCtx.is_recorrente = false;
+          updatedCtx.categoria_tipo = "avulsa";
+          updatedCtx.step = "ask_origin";
+          await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+          return await askOrigin(chatId, userId, pendingContext.descricao, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, updatedCtx);
         }
       }
-      if (!extraction || extraction.status === "not_financial") {
+
+      // Step: waiting for variable answer
+      if (step === "ask_variable") {
+        const isVariable = /vari[aá]vel|muda|2/i.test(processedText);
+        const updatedCtx = { ...pendingContext };
+        if (isVariable) {
+          updatedCtx.categoria_tipo = "variavel";
+          updatedCtx.eh_variavel = true;
+        } else {
+          updatedCtx.categoria_tipo = "fixa";
+          updatedCtx.eh_variavel = false;
+        }
+        updatedCtx.step = "ask_origin";
+        await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+        return await askOrigin(chatId, userId, pendingContext.descricao, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, updatedCtx);
+      }
+
+      // Step: waiting for origin/payment method answer
+      if (step === "ask_origin") {
+        const updatedCtx = { ...pendingContext };
+        // Parse the user response for origin selection
+        const lowerText = processedText.toLowerCase().trim();
+        
+        if (/sim|ok|isso|pode|confirma/i.test(lowerText) && updatedCtx.suggested_origin) {
+          // User confirmed the suggestion
+          updatedCtx.origem = updatedCtx.suggested_origin;
+          updatedCtx.cartao_ref = updatedCtx.suggested_cartao_ref || null;
+          updatedCtx.banco_ref = updatedCtx.suggested_banco_ref || null;
+        } else if (/pix/i.test(lowerText)) {
+          updatedCtx.origem = "pix";
+          updatedCtx.step = "ask_banco_pix";
+          await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+          const { data: bancos } = await supabase.from("bancos").select("nome").eq("user_id", userId);
+          const bankList = (bancos || []).map((b: any, i: number) => `${i + 1}. ${b.nome}`).join("\n");
+          await sendTelegram(chatId, `🏦 De qual banco sai o PIX?\n\n${bankList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true });
+        } else if (/cart[aã]o/i.test(lowerText)) {
+          updatedCtx.origem = "cartao";
+          updatedCtx.step = "ask_cartao";
+          await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+          const { data: cartoes } = await supabase.from("cartoes").select("apelido, final_cartao, tipo_funcao").eq("user_id", userId).is("deleted_at", null);
+          const cardList = (cartoes || []).map((c: any, i: number) => `${i + 1}. ${c.apelido} (${c.final_cartao}) - ${c.tipo_funcao}`).join("\n");
+          await sendTelegram(chatId, `💳 Qual cartão?\n\n${cardList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true });
+        } else if (/boleto/i.test(lowerText)) {
+          updatedCtx.origem = "boleto";
+        } else if (/d[eé]bito/i.test(lowerText)) {
+          updatedCtx.origem = "debito_automatico";
+        } else {
+          // Try to match a card/bank name directly
+          const { data: matchCard } = await supabase.from("cartoes").select("apelido, final_cartao").eq("user_id", userId).is("deleted_at", null).or(`apelido.ilike.%${lowerText}%,final_cartao.eq.${lowerText}`).limit(1).single();
+          if (matchCard) {
+            updatedCtx.origem = "cartao";
+            updatedCtx.cartao_ref = matchCard.apelido;
+          } else {
+            const { data: matchBank } = await supabase.from("bancos").select("nome").eq("user_id", userId).ilike("nome", `%${lowerText}%`).limit(1).single();
+            if (matchBank) {
+              updatedCtx.origem = "pix";
+              updatedCtx.banco_ref = matchBank.nome;
+            } else {
+              updatedCtx.origem = lowerText;
+            }
+          }
+        }
+
+        updatedCtx.step = "ask_categoria";
+        await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+        // Ask category
+        const { data: cats } = await supabase.from("categorias").select("id, nome").eq("user_id", userId).order("nome");
+        const catList = (cats || []).map((c: any, i: number) => `${i + 1}. ${c.nome}`).join("\n");
+        await sendTelegram(chatId, `🏷️ Qual a categoria?\n\n${catList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true });
+      }
+
+      // Step: waiting for banco for PIX
+      if (step === "ask_banco_pix") {
+        const { data: bancos } = await supabase.from("bancos").select("id, nome").eq("user_id", userId);
+        const matchedBank = (bancos || []).find((b: any, i: number) => 
+          processedText.trim() === String(i + 1) || b.nome.toLowerCase().includes(processedText.toLowerCase().trim())
+        );
+        const updatedCtx = { ...pendingContext };
+        if (matchedBank) {
+          updatedCtx.banco_ref = matchedBank.nome;
+        }
+        updatedCtx.step = "ask_categoria";
+        await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+        const { data: cats } = await supabase.from("categorias").select("id, nome").eq("user_id", userId).order("nome");
+        const catList = (cats || []).map((c: any, i: number) => `${i + 1}. ${c.nome}`).join("\n");
+        await sendTelegram(chatId, `🏷️ Qual a categoria?\n\n${catList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true });
+      }
+
+      // Step: waiting for card selection
+      if (step === "ask_cartao") {
+        const { data: cartoes } = await supabase.from("cartoes").select("id, apelido, final_cartao, tipo_funcao").eq("user_id", userId).is("deleted_at", null);
+        const matchedCard = (cartoes || []).find((c: any, i: number) => 
+          processedText.trim() === String(i + 1) || c.apelido.toLowerCase().includes(processedText.toLowerCase().trim()) || c.final_cartao === processedText.trim()
+        );
+        const updatedCtx = { ...pendingContext };
+        if (matchedCard) {
+          updatedCtx.cartao_ref = matchedCard.apelido;
+          // If card is multiplo, ask debit or credit
+          if (matchedCard.tipo_funcao === "multiplo") {
+            updatedCtx.step = "ask_funcao_cartao";
+            updatedCtx.cartao_id_resolved = matchedCard.id;
+            await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+            await sendTelegram(chatId, `💳 ${matchedCard.apelido} é um cartão múltiplo. Foi:\n\n1️⃣ Crédito\n2️⃣ Débito`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+            return jsonResponse({ ok: true });
+          }
+        }
+        updatedCtx.step = "ask_categoria";
+        await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+        const { data: cats } = await supabase.from("categorias").select("id, nome").eq("user_id", userId).order("nome");
+        const catList = (cats || []).map((c: any, i: number) => `${i + 1}. ${c.nome}`).join("\n");
+        await sendTelegram(chatId, `🏷️ Qual a categoria?\n\n${catList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true });
+      }
+
+      // Step: asking debit or credit for multiplo card
+      if (step === "ask_funcao_cartao") {
+        const updatedCtx = { ...pendingContext };
+        if (/cr[eé]dito|1/i.test(processedText)) {
+          updatedCtx.funcao_usada = "credito";
+        } else {
+          updatedCtx.funcao_usada = "debito";
+        }
+        updatedCtx.step = "ask_categoria";
+        await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+        const { data: cats } = await supabase.from("categorias").select("id, nome").eq("user_id", userId).order("nome");
+        const catList = (cats || []).map((c: any, i: number) => `${i + 1}. ${c.nome}`).join("\n");
+        await sendTelegram(chatId, `🏷️ Qual a categoria?\n\n${catList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+        return jsonResponse({ ok: true });
+      }
+
+      // Step: waiting for category
+      if (step === "ask_categoria") {
+        const { data: cats } = await supabase.from("categorias").select("id, nome").eq("user_id", userId).order("nome");
+        const matchedCat = (cats || []).find((c: any, i: number) =>
+          processedText.trim() === String(i + 1) || c.nome.toLowerCase().includes(processedText.toLowerCase().trim())
+        );
+        const updatedCtx = { ...pendingContext };
+        if (matchedCat) {
+          updatedCtx.categoria_ref = matchedCat.nome;
+          updatedCtx.categoria_id_resolved = matchedCat.id;
+          
+          // Check if this category has subcategories
+          const subs = SUBCATEGORIAS[matchedCat.nome];
+          if (subs && subs.length > 0) {
+            updatedCtx.step = "ask_subcategoria";
+            await supabase.from("telegram_messages").update({ pending_context: updatedCtx }).eq("chat_id", chatId).not("pending_context", "is", null);
+            const subList = subs.map((s, i) => `${i + 1}. ${s}`).join("\n");
+            await sendTelegram(chatId, `📂 Subcategoria de ${matchedCat.nome}:\n\n${subList}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+            return jsonResponse({ ok: true });
+          }
+        }
+        // No subcategory needed, finalize
+        updatedCtx.step = "finalize";
+        return await finalizeTransaction(chatId, userId, updatedCtx, fileUrl, fileName, update, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      }
+
+      // Step: waiting for subcategory
+      if (step === "ask_subcategoria") {
+        const updatedCtx = { ...pendingContext };
+        const catName = updatedCtx.categoria_ref;
+        const subs = SUBCATEGORIAS[catName] || [];
+        const matchedSub = subs.find((s, i) => processedText.trim() === String(i + 1) || s.toLowerCase().includes(processedText.toLowerCase().trim()));
+        updatedCtx.subcategoria = matchedSub || processedText.trim();
+        updatedCtx.step = "finalize";
+        return await finalizeTransaction(chatId, userId, updatedCtx, fileUrl, fileName, update, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      }
+
+      // Legacy: NLP-based pending context (old flow)
+      if (step === "extraction") {
+        let enrichedText = processedText;
+        enrichedText = `Contexto anterior: Descrição="${pendingContext.descricao || ""}", Valor=${pendingContext.valor || "?"}, Data=${pendingContext.data_vencimento || "?"}, Categoria=${pendingContext.categoria_tipo || "?"}, Origem=${pendingContext.origem || "?"}, Cartão=${pendingContext.cartao_ref || "?"}, Banco=${pendingContext.banco_ref || "?"}, Status=${pendingContext.status_pagamento || "pendente"}. Pergunta feita: "${pendingContext.missing_question || ""}". Resposta do usuário: "${processedText}". Combine tudo e complete os dados.`;
+        await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+
+        const extraction = await extractTransactionData(enrichedText, userId, supabase, OPENAI_KEY);
+        if (extraction && extraction.status === "complete") {
+          // Start smart flow with extracted data
+          const ctx = {
+            step: "ask_recurrence",
+            descricao: extraction.descricao,
+            valor: extraction.valor,
+            data_vencimento: extraction.data_vencimento,
+            origem: extraction.origem,
+            cartao_ref: extraction.cartao_ref,
+            banco_ref: extraction.banco_ref,
+            categoria_ref: extraction.categoria_ref,
+            status_pagamento: extraction.status_pagamento,
+          };
+          await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+          
+          // Check if it's a known category for recurrence question
+          const catName = extraction.categoria_ref?.toLowerCase() || "";
+          if (["software", "contas do escritório", "contas fixas"].some(c => catName.includes(c.toLowerCase()))) {
+            await sendTelegram(chatId, `📋 "${extraction.descricao}" por R$ ${Number(extraction.valor).toFixed(2)}.\n\nEsse gasto é:\n1️⃣ Mensal/Recorrente\n2️⃣ Apenas este mês`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          } else {
+            await sendTelegram(chatId, `📋 "${extraction.descricao}" por R$ ${Number(extraction.valor).toFixed(2)}.\n\nÉ um pagamento:\n1️⃣ Mensal/Recorrente\n2️⃣ Apenas este mês (avulso)`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          }
+          return jsonResponse({ ok: true });
+        }
+        // If still incomplete, ask again
+        if (extraction && extraction.status === "incomplete") {
+          const contextToStore = {
+            step: "extraction",
+            descricao: extraction.descricao || pendingContext?.descricao || null,
+            valor: extraction.valor || pendingContext?.valor || null,
+            data_vencimento: extraction.data_vencimento || pendingContext?.data_vencimento || null,
+            missing_question: extraction.missing_question,
+          };
+          await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+          await sendTelegram(chatId, `📝 ${extraction.descricao || "?"} - R$ ${extraction.valor || "?"}\n\n❓ ${extraction.missing_question}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+          return jsonResponse({ ok: true, incomplete: true });
+        }
+        // Not financial
         const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
         await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
         return jsonResponse({ ok: true });
       }
     }
 
+    // ─── NLP: Extract transaction data via AI (first message) ───
+    const extraction = await extractTransactionData(processedText, userId, supabase, OPENAI_KEY);
+
+    if (!extraction || extraction.status === "not_financial") {
+      const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
+      await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      return jsonResponse({ ok: true });
+    }
+
     if (extraction.status === "incomplete") {
-      // Store pending context in the current message row
       const contextToStore = {
-        descricao: extraction.descricao || pendingContext?.descricao || null,
-        valor: extraction.valor || pendingContext?.valor || null,
-        data_vencimento: extraction.data_vencimento || pendingContext?.data_vencimento || null,
-        categoria_tipo: extraction.categoria_tipo || pendingContext?.categoria_tipo || null,
-        origem: extraction.origem || pendingContext?.origem || null,
-        cartao_ref: extraction.cartao_ref || pendingContext?.cartao_ref || null,
-        banco_ref: extraction.banco_ref || pendingContext?.banco_ref || null,
-        categoria_ref: extraction.categoria_ref || pendingContext?.categoria_ref || null,
-        status_pagamento: extraction.status_pagamento || pendingContext?.status_pagamento || null,
+        step: "extraction",
+        descricao: extraction.descricao || null,
+        valor: extraction.valor || null,
+        data_vencimento: extraction.data_vencimento || null,
+        categoria_tipo: extraction.categoria_tipo || null,
+        origem: extraction.origem || null,
+        cartao_ref: extraction.cartao_ref || null,
+        banco_ref: extraction.banco_ref || null,
+        categoria_ref: extraction.categoria_ref || null,
+        status_pagamento: extraction.status_pagamento || null,
         missing_question: extraction.missing_question,
       };
-
-      await supabase
-        .from("telegram_messages")
-        .update({ pending_context: contextToStore })
-        .eq("update_id", update.update_id);
-
-      await sendTelegram(
-        chatId,
-        `📝 Entendi parcialmente:\n• Descrição: ${contextToStore.descricao || "?"}\n• Valor: ${contextToStore.valor ? `R$ ${contextToStore.valor}` : "?"}\n• Data: ${contextToStore.data_vencimento || "?"}\n\n❓ ${extraction.missing_question}`,
-        LOVABLE_API_KEY,
-        TELEGRAM_API_KEY
+      await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+      await sendTelegram(chatId,
+        `📝 Entendi parcialmente:\n• ${contextToStore.descricao || "?"}\n• R$ ${contextToStore.valor || "?"}\n\n❓ ${extraction.missing_question}`,
+        LOVABLE_API_KEY, TELEGRAM_API_KEY
       );
       return jsonResponse({ ok: true, incomplete: true });
     }
 
-    // ─── CREATE TRANSACTION ───
-    const txData: any = {
+    // ─── SMART FLOW: Start multi-step conversation ───
+    const ctx: any = {
+      step: "ask_recurrence",
       descricao: extraction.descricao,
       valor: extraction.valor,
       data_vencimento: extraction.data_vencimento || new Date().toISOString().split("T")[0],
-      status: extraction.status_pagamento === "pago" ? "pago" : "pendente",
-      categoria_tipo: extraction.categoria_tipo || "avulsa",
-      origem: extraction.origem || null,
-      user_id: userId,
+      origem: extraction.origem,
+      cartao_ref: extraction.cartao_ref,
+      banco_ref: extraction.banco_ref,
+      categoria_ref: extraction.categoria_ref,
+      status_pagamento: extraction.status_pagamento,
+      subcategoria: extraction.subcategoria || null,
     };
 
-    if (extraction.status_pagamento === "pago") {
-      txData.data_pagamento = extraction.data_pagamento || new Date().toISOString().split("T")[0];
-    }
+    // Store context
+    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("update_id", update.update_id);
 
-    // Match card by name/final
-    if (extraction.cartao_ref) {
-      const { data: cartao } = await supabase
-        .from("cartoes")
-        .select("id, tipo_funcao")
-        .eq("user_id", userId)
-        .or(`apelido.ilike.%${extraction.cartao_ref}%,final_cartao.eq.${extraction.cartao_ref}`)
-        .limit(1)
-        .single();
-      if (cartao) {
-        txData.cartao_id = cartao.id;
-        // If card is multiplo and user didn't specify debit/credit, it's already handled by origin
-      }
-    }
+    // Ask recurrence question
+    await sendTelegram(chatId,
+      `📋 "${extraction.descricao}" por R$ ${Number(extraction.valor).toFixed(2)}.\n\nEsse gasto é:\n1️⃣ Mensal/Recorrente\n2️⃣ Apenas este mês (avulso)`,
+      LOVABLE_API_KEY, TELEGRAM_API_KEY
+    );
+    return jsonResponse({ ok: true });
 
-    // Match bank
-    if (extraction.banco_ref) {
-      const { data: banco } = await supabase
-        .from("bancos")
-        .select("id")
-        .eq("user_id", userId)
-        .ilike("nome", `%${extraction.banco_ref}%`)
-        .limit(1)
-        .single();
-      if (banco) txData.banco_id = banco.id;
-    }
-
-    // Match category
-    if (extraction.categoria_ref) {
-      const { data: cat } = await supabase
-        .from("categorias")
-        .select("id")
-        .eq("user_id", userId)
-        .ilike("nome", `%${extraction.categoria_ref}%`)
-        .limit(1)
-        .single();
-      if (cat) txData.categoria_id = cat.id;
-    }
-
-    const { data: newTx, error: txErr } = await supabase
-      .from("transacoes")
-      .insert(txData)
-      .select("id")
-      .single();
-
-    if (txErr) {
-      await sendTelegram(chatId, `❌ Erro ao registrar: ${txErr.message}`, LOVABLE_API_KEY, TELEGRAM_API_KEY);
-      return jsonResponse({ ok: false, error: txErr.message });
-    }
-
-    // Store last transaction ID in pending context for receipt linking
-    await supabase
-      .from("telegram_messages")
-      .update({ pending_context: { last_transaction_id: newTx.id } })
-      .eq("update_id", update.update_id);
-
-    // Link file if present
-    if (fileUrl && newTx) {
-      await supabase.from("comprovantes").insert({
-        transacao_id: newTx.id,
-        file_path: fileUrl,
-        file_name: fileName!,
-        file_type: message.document?.mime_type || "image/jpeg",
-        uploaded_by: userId,
-      });
-    }
-
-    // PIX: deduct bank balance
-    if (extraction.origem === "pix" && txData.banco_id && extraction.status_pagamento === "pago") {
-      const { data: banco } = await supabase
-        .from("bancos")
-        .select("saldo_atual")
-        .eq("id", txData.banco_id)
-        .single();
-      if (banco) {
-        await supabase
-          .from("bancos")
-          .update({ saldo_atual: banco.saldo_atual - extraction.valor })
-          .eq("id", txData.banco_id);
-      }
-    }
-
-    // Build response
-    const fmtDate = (d: string) => {
-      const [y, m, dd] = d.split("-");
-      return `${dd}/${m}/${y}`;
-    };
-    let response = `✅ Lançamento registrado!\n\n`;
-    response += `📝 ${extraction.descricao}\n`;
-    response += `💰 R$ ${Number(extraction.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
-    response += `📅 ${extraction.data_vencimento ? fmtDate(extraction.data_vencimento) : "Hoje"}\n`;
-    response += `📊 Status: ${txData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
-    if (extraction.origem) response += `\n💳 Forma: ${extraction.origem}`;
-    if (extraction.categoria_ref) response += `\n🏷️ Categoria: ${extraction.categoria_ref}`;
-
-    if (!fileUrl) {
-      response += `\n\n⚠️ Comprovante não detectado. Envie a foto/PDF agora ou marcarei como pendente.`;
-    } else {
-      response += `\n📎 Comprovante anexado!`;
-    }
-
-    await sendTelegram(chatId, response, LOVABLE_API_KEY, TELEGRAM_API_KEY);
-    return jsonResponse({ ok: true, transaction_id: newTx.id });
   } catch (err: any) {
     console.error("Agent error:", err);
     return jsonResponse({ ok: false, error: err.message }, 500);
   }
 });
+
+// ─── ASK ORIGIN with memory ───
+async function askOrigin(
+  chatId: number,
+  userId: string,
+  descricao: string,
+  supabase: any,
+  lovableKey: string,
+  telegramKey: string,
+  ctx: any
+) {
+  // Check preferences: item-specific first, then category-level
+  const { data: itemPref } = await supabase
+    .from("preferencias_origem")
+    .select("cartao_id, banco_id, origem, cartoes(apelido, final_cartao), bancos(nome)")
+    .eq("user_id", userId)
+    .ilike("item_nome", `%${descricao}%`)
+    .limit(1)
+    .maybeSingle();
+
+  if (itemPref) {
+    let suggestion = "";
+    if (itemPref.cartoes) {
+      suggestion = `o cartão ${itemPref.cartoes.apelido} (${itemPref.cartoes.final_cartao})`;
+      ctx.suggested_origin = itemPref.origem || "cartao";
+      ctx.suggested_cartao_ref = itemPref.cartoes.apelido;
+    } else if (itemPref.bancos) {
+      suggestion = `${itemPref.origem === "pix" ? "PIX pelo" : ""} banco ${itemPref.bancos.nome}`;
+      ctx.suggested_origin = itemPref.origem || "pix";
+      ctx.suggested_banco_ref = itemPref.bancos.nome;
+    }
+    if (suggestion) {
+      await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+      await sendTelegram(chatId, `💳 Da última vez, "${descricao}" foi paga com ${suggestion}. Usar o mesmo?\n\nResponda "sim" ou informe outra forma (PIX, Cartão, Boleto, Débito Automático)`, lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
+    }
+  }
+
+  // Check last transaction with same description
+  const { data: lastTx } = await supabase
+    .from("transacoes")
+    .select("origem, cartao_id, banco_id, cartoes(apelido, final_cartao), bancos(nome)")
+    .eq("user_id", userId)
+    .is("deleted_at", null)
+    .ilike("descricao", `%${descricao}%`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (lastTx && (lastTx.cartao_id || lastTx.banco_id)) {
+    let suggestion = "";
+    if (lastTx.cartoes) {
+      suggestion = `o cartão ${(lastTx as any).cartoes.apelido} (${(lastTx as any).cartoes.final_cartao})`;
+      ctx.suggested_origin = lastTx.origem || "cartao";
+      ctx.suggested_cartao_ref = (lastTx as any).cartoes.apelido;
+    } else if (lastTx.bancos) {
+      suggestion = `${lastTx.origem === "pix" ? "PIX pelo" : ""} banco ${(lastTx as any).bancos.nome}`;
+      ctx.suggested_origin = lastTx.origem || "pix";
+      ctx.suggested_banco_ref = (lastTx as any).bancos.nome;
+    }
+    if (suggestion) {
+      await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+      await sendTelegram(chatId, `💳 Da última vez, "${descricao}" foi paga com ${suggestion}. Usar o mesmo?\n\nResponda "sim" ou informe outra forma (PIX, Cartão, Boleto, Débito Automático)`, lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
+    }
+  }
+
+  // No history: ask normally
+  await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+  await sendTelegram(chatId, `💳 Como será pago "${descricao}"?\n\n• PIX\n• Cartão\n• Boleto\n• Débito Automático`, lovableKey, telegramKey);
+  return jsonResponse({ ok: true });
+}
+
+// ─── FINALIZE TRANSACTION ───
+async function finalizeTransaction(
+  chatId: number,
+  userId: string,
+  ctx: any,
+  fileUrl: string | null,
+  fileName: string | null,
+  update: any,
+  supabase: any,
+  lovableKey: string,
+  telegramKey: string
+) {
+  const txData: any = {
+    descricao: ctx.descricao,
+    valor: ctx.valor,
+    data_vencimento: ctx.data_vencimento || new Date().toISOString().split("T")[0],
+    status: ctx.status_pagamento === "pago" ? "pago" : "pendente",
+    categoria_tipo: ctx.categoria_tipo || "avulsa",
+    origem: ctx.origem || null,
+    subcategoria: ctx.subcategoria || null,
+    user_id: userId,
+  };
+
+  if (ctx.status_pagamento === "pago") {
+    txData.data_pagamento = ctx.data_pagamento || new Date().toISOString().split("T")[0];
+  }
+
+  // Match card
+  if (ctx.cartao_ref) {
+    const { data: cartao } = await supabase
+      .from("cartoes")
+      .select("id, banco_id")
+      .eq("user_id", userId)
+      .or(`apelido.ilike.%${ctx.cartao_ref}%,final_cartao.eq.${ctx.cartao_ref}`)
+      .limit(1)
+      .single();
+    if (cartao) {
+      txData.cartao_id = cartao.id;
+      if (cartao.banco_id) txData.banco_id = cartao.banco_id;
+    }
+  }
+
+  // Match bank
+  if (ctx.banco_ref && !txData.banco_id) {
+    const { data: banco } = await supabase
+      .from("bancos")
+      .select("id")
+      .eq("user_id", userId)
+      .ilike("nome", `%${ctx.banco_ref}%`)
+      .limit(1)
+      .single();
+    if (banco) txData.banco_id = banco.id;
+  }
+
+  // Match category
+  if (ctx.categoria_id_resolved) {
+    txData.categoria_id = ctx.categoria_id_resolved;
+  } else if (ctx.categoria_ref) {
+    const { data: cat } = await supabase
+      .from("categorias")
+      .select("id")
+      .eq("user_id", userId)
+      .ilike("nome", `%${ctx.categoria_ref}%`)
+      .limit(1)
+      .single();
+    if (cat) txData.categoria_id = cat.id;
+  }
+
+  const { data: newTx, error: txErr } = await supabase
+    .from("transacoes")
+    .insert(txData)
+    .select("id")
+    .single();
+
+  if (txErr) {
+    await sendTelegram(chatId, `❌ Erro ao registrar: ${txErr.message}`, lovableKey, telegramKey);
+    return jsonResponse({ ok: false, error: txErr.message });
+  }
+
+  // Save preference for future memory
+  if (ctx.descricao && (txData.cartao_id || txData.banco_id)) {
+    await supabase.from("preferencias_origem").upsert({
+      user_id: userId,
+      item_nome: ctx.descricao,
+      cartao_id: txData.cartao_id || null,
+      banco_id: txData.banco_id || null,
+      origem: txData.origem || null,
+      categoria_id: txData.categoria_id || null,
+    }, { onConflict: "user_id,item_nome" });
+  }
+
+  // If recurrent, also create recorrencia
+  if (ctx.is_recorrente) {
+    const dia = new Date(txData.data_vencimento).getDate();
+    await supabase.from("recorrencias_fixas").insert({
+      nome: ctx.descricao,
+      valor_estimado: ctx.valor,
+      dia_vencimento_padrao: dia,
+      eh_variavel: ctx.eh_variavel || false,
+      cartao_id: txData.cartao_id || null,
+      banco_id: txData.banco_id || null,
+      categoria_id: txData.categoria_id || null,
+      origem: txData.origem || null,
+      user_id: userId,
+    });
+  }
+
+  // Store last transaction ID for receipt linking
+  await supabase.from("telegram_messages").update({ pending_context: { last_transaction_id: newTx.id } }).eq("chat_id", chatId).not("pending_context", "is", null);
+
+  // Link file if present
+  if (fileUrl && newTx) {
+    await supabase.from("comprovantes").insert({
+      transacao_id: newTx.id,
+      file_path: fileUrl,
+      file_name: fileName!,
+      file_type: "image/jpeg",
+      uploaded_by: userId,
+    });
+  }
+
+  // PIX: deduct bank balance
+  if (ctx.origem === "pix" && txData.banco_id && ctx.status_pagamento === "pago") {
+    const { data: banco } = await supabase.from("bancos").select("saldo_atual").eq("id", txData.banco_id).single();
+    if (banco) {
+      await supabase.from("bancos").update({ saldo_atual: banco.saldo_atual - ctx.valor }).eq("id", txData.banco_id);
+    }
+  }
+
+  // Build response
+  const fmtDate = (d: string) => { const [y, m, dd] = d.split("-"); return `${dd}/${m}/${y}`; };
+  let response = `✅ Lançamento registrado!\n\n`;
+  response += `📝 ${ctx.descricao}\n`;
+  response += `💰 R$ ${Number(ctx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
+  response += `📅 ${ctx.data_vencimento ? fmtDate(ctx.data_vencimento) : "Hoje"}\n`;
+  response += `📊 ${txData.categoria_tipo === "fixa" ? "🔒 Fixa" : txData.categoria_tipo === "variavel" ? "📊 Variável" : "📝 Avulsa"}`;
+  if (ctx.is_recorrente) response += ` | 🔄 Recorrente`;
+  if (ctx.origem) response += `\n💳 ${ctx.origem}`;
+  if (ctx.categoria_ref) response += `\n🏷️ ${ctx.categoria_ref}`;
+  if (ctx.subcategoria) response += ` > ${ctx.subcategoria}`;
+  response += `\n📊 Status: ${txData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
+
+  if (!fileUrl) {
+    response += `\n\n📎 Envie o comprovante/boleto agora para eu vincular.`;
+  } else {
+    response += `\n📎 Comprovante anexado!`;
+  }
+
+  await sendTelegram(chatId, response, lovableKey, telegramKey);
+  return jsonResponse({ ok: true, transaction_id: newTx.id });
+}
 
 // ─── COMMAND HANDLER ───
 async function handleCommand(
@@ -370,14 +718,14 @@ async function handleCommand(
       const { data: bancos } = await supabase.from("bancos").select("saldo_atual").eq("user_id", userId);
       const saldo = (bancos || []).reduce((s: number, b: any) => s + Number(b.saldo_atual), 0);
 
-      await sendTelegram(chatId, 
-        `📊 *Resumo do Mês*\n\n` +
+      await sendTelegram(chatId,
+        `📊 Resumo do Mês\n\n` +
         `💳 Saldo em contas: R$ ${saldo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n` +
         `✅ Total pago: R$ ${pago.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n` +
         `⏳ Pendente: R$ ${pendente.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n` +
         `🔴 Atrasado: R$ ${atrasado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n` +
         `📈 Total a pagar: R$ ${(pendente + atrasado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-        lovableKey, telegramKey, "Markdown"
+        lovableKey, telegramKey
       );
       break;
     }
@@ -398,22 +746,20 @@ async function handleCommand(
       }
 
       const txIds = pending.map((t: any) => t.id);
-      const { data: comps } = await supabase
-        .from("comprovantes")
-        .select("transacao_id")
-        .in("transacao_id", txIds);
+      const { data: comps } = await supabase.from("comprovantes").select("transacao_id").in("transacao_id", txIds);
       const compSet = new Set((comps || []).map((c: any) => c.transacao_id));
 
-      let msg = "📋 *Pendências*\n\n";
+      let msg = "📋 Pendências\n\n";
       for (const tx of pending) {
-        const dt = new Date(tx.data_vencimento).toLocaleDateString("pt-BR");
+        const [y, m, d] = tx.data_vencimento.split("-");
+        const dt = `${d}/${m}/${y}`;
         const statusIcon = tx.status === "atrasado" ? "🔴" : "⏳";
         const compIcon = compSet.has(tx.id) ? "📎" : "❌";
         msg += `${statusIcon} ${dt} - ${tx.descricao} - R$ ${Number(tx.valor).toFixed(2)} ${compIcon}\n`;
       }
       msg += `\n❌ = sem comprovante | 📎 = com comprovante`;
 
-      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
@@ -429,15 +775,13 @@ async function handleCommand(
         break;
       }
 
-      let msg = "💳 *Limites dos Cartões*\n\n";
+      let msg = "💳 Limites dos Cartões\n\n";
       for (const c of cartoes) {
         const pct = Math.round((c.limite_disponivel / c.limite_total) * 100);
-        const bar = "█".repeat(Math.round(pct / 10)) + "░".repeat(10 - Math.round(pct / 10));
-        msg += `*${c.apelido}* (${c.final_cartao} - ${c.bandeira})\n`;
-        msg += `${bar} ${pct}%\n`;
-        msg += `Disponível: R$ ${Number(c.limite_disponivel).toFixed(2)} / R$ ${Number(c.limite_total).toFixed(2)}\n\n`;
+        msg += `${c.apelido} (${c.final_cartao} - ${c.bandeira})\n`;
+        msg += `Disponível: R$ ${Number(c.limite_disponivel).toFixed(2)} / R$ ${Number(c.limite_total).toFixed(2)} (${pct}%)\n\n`;
       }
-      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
@@ -460,12 +804,12 @@ async function handleCommand(
 
       let msg = "";
       for (const f of forn) {
-        msg += `🏢 *${f.nome}*\n`;
-        if (f.chave_pix) msg += `🔑 Chave PIX: \`${f.chave_pix}\`\n`;
+        msg += `🏢 ${f.nome}\n`;
+        if (f.chave_pix) msg += `🔑 Chave PIX: ${f.chave_pix}\n`;
         if (f.cnpj) msg += `CNPJ: ${f.cnpj}\n`;
         msg += "\n";
       }
-      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
@@ -488,26 +832,27 @@ async function handleCommand(
         break;
       }
 
-      let msg = `🔍 *Resultados para "${argStr}"*\n\n`;
+      let msg = `🔍 Resultados para "${argStr}"\n\n`;
       for (const r of results) {
-        const dt = new Date(r.data_vencimento).toLocaleDateString("pt-BR");
+        const [y, m, d] = r.data_vencimento.split("-");
+        const dt = `${d}/${m}/${y}`;
         const icon = r.status === "pago" ? "✅" : r.status === "atrasado" ? "🔴" : "⏳";
         msg += `${icon} ${dt} - ${r.descricao} - R$ ${Number(r.valor).toFixed(2)}\n`;
       }
-      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
     case "/alterar_limite": {
       if (userRole !== "admin") {
-        await sendTelegram(chatId, "⛔ Seu perfil de Assistente não tem permissão para alterar limites de cartão.", lovableKey, telegramKey);
+        await sendTelegram(chatId, "⛔ Sem permissão para alterar limites.", lovableKey, telegramKey);
         break;
       }
       const parts = argStr.split(" ");
       const newLimit = Number(parts.pop());
       const cardName = parts.join(" ");
       if (!cardName || isNaN(newLimit)) {
-        await sendTelegram(chatId, "Use: /alterar\\_limite [nome cartão] [novo limite]", lovableKey, telegramKey);
+        await sendTelegram(chatId, "Use: /alterar_limite [nome cartão] [novo limite]", lovableKey, telegramKey);
         break;
       }
       const { data: card } = await supabase
@@ -525,14 +870,13 @@ async function handleCommand(
         .from("cartoes")
         .update({ limite_total: newLimit, limite_disponivel: card.limite_disponivel + diff })
         .eq("id", card.id);
-      await sendTelegram(chatId, `✅ Limite do cartão atualizado para R$ ${newLimit.toFixed(2)}`, lovableKey, telegramKey);
+      await sendTelegram(chatId, `✅ Limite atualizado para R$ ${newLimit.toFixed(2)}`, lovableKey, telegramKey);
       break;
     }
 
-    // ─── NEW: Create Bank ───
     case "/novo_banco": {
       if (!argStr) {
-        await sendTelegram(chatId, "Use: /novo\\_banco [nome] [saldo inicial]\nExemplo: /novo\\_banco Nubank 5000", lovableKey, telegramKey);
+        await sendTelegram(chatId, "Use: /novo_banco [nome] [saldo inicial]\nExemplo: /novo_banco Nubank 5000", lovableKey, telegramKey);
         break;
       }
       const bankParts = argStr.split(" ");
@@ -559,22 +903,19 @@ async function handleCommand(
         await sendTelegram(chatId, `❌ Erro ao criar banco: ${bankErr.message}`, lovableKey, telegramKey);
       } else {
         await sendTelegram(chatId,
-          `🏦 Banco cadastrado!\n\n` +
-          `📌 Nome: ${newBank.nome}\n` +
-          `💰 Saldo: R$ ${Number(newBank.saldo_atual).toFixed(2)}`,
+          `🏦 Banco cadastrado!\n\n📌 Nome: ${newBank.nome}\n💰 Saldo: R$ ${Number(newBank.saldo_atual).toFixed(2)}`,
           lovableKey, telegramKey
         );
       }
       break;
     }
 
-    // ─── NEW: Create Card (AI-assisted) ───
     case "/novo_cartao": {
       if (!argStr) {
         await sendTelegram(chatId,
-          "Use: /novo\\_cartao [dados do cartão]\n\n" +
-          "Exemplo:\n/novo\\_cartao Roxinho final 4523 Visa crédito Nubank limite 8000 fecha dia 3 vence dia 10 validade 12/2029\n\n" +
-          "Dados necessários: apelido, final (4 dígitos), bandeira (visa/mastercard/elo/amex), função (débito/crédito/múltiplo), banco, limite, dia fechamento, dia vencimento",
+          "Use: /novo_cartao [dados do cartão]\n\n" +
+          "Exemplo:\n/novo_cartao Roxinho final 4523 Visa crédito Nubank limite 8000 fecha dia 3 vence dia 10\n\n" +
+          "Dados necessários: apelido, final (4 dígitos), bandeira, função, banco, limite, dia fechamento, dia vencimento",
           lovableKey, telegramKey
         );
         break;
@@ -589,7 +930,6 @@ async function handleCommand(
         break;
       }
 
-      // Match bank
       let bancoId: string | null = null;
       if (cardExtraction.banco_ref) {
         const { data: banco } = await supabase
@@ -625,128 +965,62 @@ async function handleCommand(
         await sendTelegram(chatId, `❌ Erro ao criar cartão: ${cardErr.message}`, lovableKey, telegramKey);
       } else {
         await sendTelegram(chatId,
-          `💳 Cartão cadastrado!\n\n` +
-          `📌 ${newCard.apelido} (${newCard.final_cartao})\n` +
-          `🏷️ ${newCard.bandeira}\n` +
-          `💰 Limite: R$ ${Number(cardExtraction.limite_total || 0).toFixed(2)}`,
+          `💳 Cartão cadastrado!\n\n📌 ${newCard.apelido} (${newCard.final_cartao})\n🏷️ ${newCard.bandeira}\n💰 Limite: R$ ${Number(cardExtraction.limite_total || 0).toFixed(2)}`,
           lovableKey, telegramKey
         );
       }
       break;
     }
 
-    // ─── NEW: Create Transaction (structured) ───
     case "/nova_conta": {
       if (!argStr) {
         await sendTelegram(chatId,
-          "Use: /nova\\_conta [dados da conta]\n\n" +
-          "Exemplo:\n/nova\\_conta Aluguel R$ 2500 vence dia 10 fixa boleto banco Itaú categoria Escritório\n\n" +
-          "Ou simplesmente me escreva em linguagem natural que eu entendo!",
+          "Use: /nova_conta [dados da conta]\n\n" +
+          "Exemplo:\n/nova_conta Aluguel R$ 2500 vence dia 10\n\nOu simplesmente me escreva em linguagem natural!",
           lovableKey, telegramKey
         );
         break;
       }
-      // Delegate to NLP extraction (same flow as natural language)
+      // Delegate to NLP - the smart flow will handle the rest
       const txExtraction = await extractTransactionData(argStr, userId, supabase, openaiKey);
       if (!txExtraction || txExtraction.status === "not_financial") {
         await sendTelegram(chatId, "❌ Não consegui identificar os dados da conta. Tente novamente com mais detalhes.", lovableKey, telegramKey);
         break;
       }
       if (txExtraction.status === "incomplete") {
-        await sendTelegram(chatId,
-          `📝 Entendi parcialmente:\n• Descrição: ${txExtraction.descricao || "?"}\n• Valor: ${txExtraction.valor ? `R$ ${txExtraction.valor}` : "?"}\n\n❓ ${txExtraction.missing_question}`,
-          lovableKey, telegramKey
-        );
+        const contextToStore = {
+          step: "extraction",
+          descricao: txExtraction.descricao || null,
+          valor: txExtraction.valor || null,
+          data_vencimento: txExtraction.data_vencimento || null,
+          missing_question: txExtraction.missing_question,
+        };
+        // Store in latest message row
+        await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+        await sendTelegram(chatId, `📝 ${txExtraction.descricao || "?"} - R$ ${txExtraction.valor || "?"}\n\n❓ ${txExtraction.missing_question}`, lovableKey, telegramKey);
         break;
       }
 
-      // Build transaction following same rules as manual creation
-      const ctxData: any = {
+      // Start smart flow
+      const ctx: any = {
+        step: "ask_recurrence",
         descricao: txExtraction.descricao,
         valor: txExtraction.valor,
         data_vencimento: txExtraction.data_vencimento || new Date().toISOString().split("T")[0],
-        status: txExtraction.status_pagamento === "pago" ? "pago" : "pendente",
-        categoria_tipo: txExtraction.categoria_tipo || "avulsa",
-        origem: txExtraction.origem || null,
-        user_id: userId,
+        origem: txExtraction.origem,
+        cartao_ref: txExtraction.cartao_ref,
+        banco_ref: txExtraction.banco_ref,
+        categoria_ref: txExtraction.categoria_ref,
+        status_pagamento: txExtraction.status_pagamento,
       };
-
-      if (txExtraction.status_pagamento === "pago") {
-        ctxData.data_pagamento = txExtraction.data_pagamento || new Date().toISOString().split("T")[0];
-      }
-
-      // Match card
-      if (txExtraction.cartao_ref) {
-        const { data: cartao } = await supabase
-          .from("cartoes")
-          .select("id, banco_id")
-          .eq("user_id", userId)
-          .or(`apelido.ilike.%${txExtraction.cartao_ref}%,final_cartao.eq.${txExtraction.cartao_ref}`)
-          .limit(1)
-          .single();
-        if (cartao) {
-          ctxData.cartao_id = cartao.id;
-          if (cartao.banco_id) ctxData.banco_id = cartao.banco_id;
-        }
-      }
-
-      // Match bank (PIX/dinheiro/débito automático require bank)
-      if (txExtraction.banco_ref && !ctxData.banco_id) {
-        const { data: banco } = await supabase
-          .from("bancos")
-          .select("id")
-          .eq("user_id", userId)
-          .ilike("nome", `%${txExtraction.banco_ref}%`)
-          .limit(1)
-          .single();
-        if (banco) ctxData.banco_id = banco.id;
-      }
-
-      // Match category
-      if (txExtraction.categoria_ref) {
-        const { data: cat } = await supabase
-          .from("categorias")
-          .select("id")
-          .eq("user_id", userId)
-          .ilike("nome", `%${txExtraction.categoria_ref}%`)
-          .limit(1)
-          .single();
-        if (cat) ctxData.categoria_id = cat.id;
-      }
-
-      const { data: newTx2, error: txErr2 } = await supabase
-        .from("transacoes")
-        .insert(ctxData)
-        .select("id")
-        .single();
-
-      if (txErr2) {
-        await sendTelegram(chatId, `❌ Erro ao registrar conta: ${txErr2.message}`, lovableKey, telegramKey);
-      } else {
-        // PIX: deduct bank balance
-        if (txExtraction.origem === "pix" && ctxData.banco_id && txExtraction.status_pagamento === "pago") {
-          const { data: banco } = await supabase
-            .from("bancos")
-            .select("saldo_atual")
-            .eq("id", ctxData.banco_id)
-            .single();
-          if (banco) {
-            await supabase
-              .from("bancos")
-              .update({ saldo_atual: banco.saldo_atual - txExtraction.valor })
-              .eq("id", ctxData.banco_id);
-          }
-        }
-
-        let resp = `✅ Conta registrada!\n\n📝 ${txExtraction.descricao}\n💰 R$ ${Number(txExtraction.valor).toFixed(2)}`;
-        if (ctxData.data_vencimento) resp += `\n📅 Vencimento: ${new Date(ctxData.data_vencimento).toLocaleDateString("pt-BR")}`;
-        resp += `\n📊 Tipo: ${ctxData.categoria_tipo} | Status: ${ctxData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
-        await sendTelegram(chatId, resp, lovableKey, telegramKey);
-      }
+      await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("update_id", update.update_id);
+      await sendTelegram(chatId,
+        `📋 "${txExtraction.descricao}" por R$ ${Number(txExtraction.valor).toFixed(2)}.\n\nEsse gasto é:\n1️⃣ Mensal/Recorrente\n2️⃣ Apenas este mês (avulso)`,
+        lovableKey, telegramKey
+      );
       break;
     }
 
-    // ─── NEW: Monthly Report ───
     case "/relatorio": {
       let rMonth: number, rYear: number;
       if (argStr) {
@@ -785,13 +1059,9 @@ async function handleCommand(
       const atrasado = rTxs.filter((t: any) => t.status === "atrasado").reduce((s: number, t: any) => s + Number(t.valor), 0);
       const total = pago + pendente + atrasado;
 
-      // Group by categoria_tipo
       const byTipo: Record<string, number> = {};
-      for (const t of rTxs) {
-        byTipo[t.categoria_tipo] = (byTipo[t.categoria_tipo] || 0) + Number(t.valor);
-      }
+      for (const t of rTxs) { byTipo[t.categoria_tipo] = (byTipo[t.categoria_tipo] || 0) + Number(t.valor); }
 
-      // Group by category
       const byCat: Record<string, number> = {};
       for (const t of rTxs) {
         const catName = (t as any).categorias?.nome || "Sem categoria";
@@ -799,43 +1069,39 @@ async function handleCommand(
       }
 
       const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-      let msg = `📊 *Relatório ${meses[rMonth - 1]}/${rYear}*\n\n`;
+      let msg = `📊 Relatório ${meses[rMonth - 1]}/${rYear}\n\n`;
       msg += `📋 Total de lançamentos: ${rTxs.length}\n`;
       msg += `💰 Total: R$ ${total.toFixed(2)}\n`;
       msg += `✅ Pago: R$ ${pago.toFixed(2)}\n`;
       msg += `⏳ Pendente: R$ ${pendente.toFixed(2)}\n`;
       msg += `🔴 Atrasado: R$ ${atrasado.toFixed(2)}\n\n`;
 
-      msg += `*Por tipo:*\n`;
+      msg += `Por tipo:\n`;
       for (const [tipo, val] of Object.entries(byTipo)) {
         const icon = tipo === "fixa" ? "🔒" : tipo === "avulsa" ? "📝" : tipo === "variavel" ? "📊" : "💳";
         msg += `${icon} ${tipo}: R$ ${val.toFixed(2)}\n`;
       }
 
-      msg += `\n*Por categoria:*\n`;
+      msg += `\nPor categoria:\n`;
       const sortedCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
       for (const [cat, val] of sortedCats.slice(0, 8)) {
         const pct = Math.round((val / total) * 100);
         msg += `• ${cat}: R$ ${val.toFixed(2)} (${pct}%)\n`;
       }
 
-      await sendTelegram(chatId, msg, lovableKey, telegramKey, "Markdown");
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
-    // ─── NEW: Attach receipt to transaction ───
     case "/anexar": {
       if (!argStr) {
         await sendTelegram(chatId,
-          "Use: /anexar [descrição da conta]\n\n" +
-          "Depois envie a foto/PDF do comprovante.\n" +
-          "Ou envie a foto diretamente que eu vinculo à transação mais recente sem comprovante.",
+          "Use: /anexar [descrição da conta]\n\nDepois envie a foto/PDF do comprovante.",
           lovableKey, telegramKey
         );
         break;
       }
 
-      // Find matching transaction
       const { data: matchTxs } = await supabase
         .from("transacoes")
         .select("id, descricao, valor, data_vencimento")
@@ -846,29 +1112,27 @@ async function handleCommand(
         .limit(5);
 
       if (!matchTxs?.length) {
-        await sendTelegram(chatId, `❌ Nenhuma transação encontrada com "${argStr}". Verifique o nome.`, lovableKey, telegramKey);
+        await sendTelegram(chatId, `❌ Nenhuma transação encontrada com "${argStr}".`, lovableKey, telegramKey);
         break;
       }
 
-      let msg = `📎 Encontrei ${matchTxs.length} transação(ões):\n\n`;
-      for (let i = 0; i < matchTxs.length; i++) {
-        const t = matchTxs[i];
-        const dt = new Date(t.data_vencimento).toLocaleDateString("pt-BR");
-        msg += `${i + 1}. ${t.descricao} - R$ ${Number(t.valor).toFixed(2)} (${dt})\n`;
-      }
-      msg += `\nAgora envie a foto/PDF do comprovante que eu anexo à transação mais recente.`;
+      // Store context for receipt linking
+      await supabase.from("telegram_messages").update({ pending_context: { last_transaction_id: matchTxs[0].id } }).eq("update_id", update.update_id);
 
+      let msg = `📎 Encontrei ${matchTxs.length} transação(ões):\n\n`;
+      for (const t of matchTxs) {
+        const [y, m, d] = t.data_vencimento.split("-");
+        msg += `• ${t.descricao} - R$ ${Number(t.valor).toFixed(2)} (${d}/${m}/${y})\n`;
+      }
+      msg += `\nEnvie o comprovante agora.`;
       await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
-    // ─── NEW: Create recurring bill ───
     case "/nova_recorrencia": {
       if (!argStr) {
         await sendTelegram(chatId,
-          "Use: /nova\\_recorrencia [dados]\n\n" +
-          "Exemplo:\n/nova\\_recorrencia Internet Vivo R$ 130 vence dia 15 fixa boleto banco Itaú variável\n\n" +
-          "Se for variável, o bot perguntará o valor todo mês antes do vencimento.",
+          "Use: /nova_recorrencia [dados]\n\nExemplo:\n/nova_recorrencia Internet Vivo R$ 130 vence dia 15 fixa boleto",
           lovableKey, telegramKey
         );
         break;
@@ -893,51 +1157,24 @@ async function handleCommand(
       };
 
       if (recExtraction.banco_ref) {
-        const { data: banco } = await supabase
-          .from("bancos")
-          .select("id")
-          .eq("user_id", userId)
-          .ilike("nome", `%${recExtraction.banco_ref}%`)
-          .limit(1)
-          .single();
+        const { data: banco } = await supabase.from("bancos").select("id").eq("user_id", userId).ilike("nome", `%${recExtraction.banco_ref}%`).limit(1).single();
         if (banco) recData.banco_id = banco.id;
       }
-
       if (recExtraction.cartao_ref) {
-        const { data: cartao } = await supabase
-          .from("cartoes")
-          .select("id")
-          .eq("user_id", userId)
-          .or(`apelido.ilike.%${recExtraction.cartao_ref}%,final_cartao.eq.${recExtraction.cartao_ref}`)
-          .limit(1)
-          .single();
+        const { data: cartao } = await supabase.from("cartoes").select("id").eq("user_id", userId).or(`apelido.ilike.%${recExtraction.cartao_ref}%,final_cartao.eq.${recExtraction.cartao_ref}`).limit(1).single();
         if (cartao) recData.cartao_id = cartao.id;
       }
-
       if (recExtraction.categoria_ref) {
-        const { data: cat } = await supabase
-          .from("categorias")
-          .select("id")
-          .eq("user_id", userId)
-          .ilike("nome", `%${recExtraction.categoria_ref}%`)
-          .limit(1)
-          .single();
+        const { data: cat } = await supabase.from("categorias").select("id").eq("user_id", userId).ilike("nome", `%${recExtraction.categoria_ref}%`).limit(1).single();
         if (cat) recData.categoria_id = cat.id;
       }
 
-      const { error: recErr } = await supabase
-        .from("recorrencias_fixas")
-        .insert(recData);
-
+      const { error: recErr } = await supabase.from("recorrencias_fixas").insert(recData);
       if (recErr) {
         await sendTelegram(chatId, `❌ Erro: ${recErr.message}`, lovableKey, telegramKey);
       } else {
         await sendTelegram(chatId,
-          `🔄 Recorrência cadastrada!\n\n` +
-          `📌 ${recData.nome}\n` +
-          `💰 Valor estimado: R$ ${Number(recData.valor_estimado).toFixed(2)}\n` +
-          `📅 Vencimento: dia ${recData.dia_vencimento_padrao}\n` +
-          `${recData.eh_variavel ? "📊 Variável — vou perguntar o valor todo mês" : "🔒 Valor fixo"}`,
+          `🔄 Recorrência cadastrada!\n\n📌 ${recData.nome}\n💰 R$ ${Number(recData.valor_estimado).toFixed(2)}\n📅 Dia ${recData.dia_vencimento_padrao}\n${recData.eh_variavel ? "📊 Variável" : "🔒 Fixa"}`,
           lovableKey, telegramKey
         );
       }
@@ -946,23 +1183,23 @@ async function handleCommand(
 
     default:
       await sendTelegram(chatId,
-        "📋 *Comandos disponíveis:*\n\n" +
-        "💰 *Cadastro:*\n" +
-        "/nova\\_conta [dados] — Nova conta/transação\n" +
-        "/novo\\_banco [nome] [saldo] — Novo banco\n" +
-        "/novo\\_cartao [dados] — Novo cartão\n" +
-        "/nova\\_recorrencia [dados] — Nova conta fixa\n\n" +
-        "📊 *Consultas:*\n" +
-        "/resumo — Gastos do mês atual\n" +
+        "📋 Comandos disponíveis:\n\n" +
+        "💰 Cadastro:\n" +
+        "/nova_conta [dados] — Nova conta\n" +
+        "/novo_banco [nome] [saldo] — Novo banco\n" +
+        "/novo_cartao [dados] — Novo cartão\n" +
+        "/nova_recorrencia [dados] — Nova conta fixa\n\n" +
+        "📊 Consultas:\n" +
+        "/resumo — Gastos do mês\n" +
         "/relatorio [mês] [ano] — Relatório mensal\n" +
-        "/pendencias — Contas pendentes/atrasadas\n" +
+        "/pendencias — Contas pendentes\n" +
         "/limite — Limites dos cartões\n" +
         "/buscar [termo] — Buscar no histórico\n" +
-        "/pix [nome] — Dados PIX de fornecedor\n" +
+        "/pix [nome] — Dados PIX\n" +
         "/anexar [nome] — Anexar comprovante\n\n" +
-        "⚙️ *Admin:*\n" +
-        "/alterar\\_limite [cartão] [valor] — Alterar limite",
-        lovableKey, telegramKey, "Markdown"
+        "⚙️ Admin:\n" +
+        "/alterar_limite [cartão] [valor]",
+        lovableKey, telegramKey
       );
   }
 
@@ -973,50 +1210,41 @@ async function handleCommand(
 async function extractCardData(text: string, userId: string, supabase: any, apiKey: string) {
   const response = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
-        {
-          role: "system",
-          content: `Extraia dados de um cartão de crédito/débito da mensagem. Campos obrigatórios: apelido, final_cartao (4 dígitos), bandeira (visa/mastercard/elo/amex), tipo_funcao (debito/credito/multiplo), dia_fechamento, dia_vencimento. Opcionais: limite_total, formato (fisico/virtual), data_validade (YYYY-MM-DD, primeiro dia do mês), banco_ref. Se faltar algum obrigatório, retorne status "incomplete" com campo missing.`,
-        },
+        { role: "system", content: `Extraia dados de um cartão de crédito/débito da mensagem. Campos obrigatórios: apelido, final_cartao (4 dígitos), bandeira (visa/mastercard/elo/amex), tipo_funcao (debito/credito/multiplo), dia_fechamento, dia_vencimento. Opcionais: limite_total, formato (fisico/virtual), data_validade (YYYY-MM-DD), banco_ref. Se faltar algum obrigatório, retorne status "incomplete" com campo missing.` },
         { role: "user", content: text },
       ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "extract_card",
-            description: "Extract card data from user message",
-            parameters: {
-              type: "object",
-              properties: {
-                status: { type: "string", enum: ["complete", "incomplete"] },
-                apelido: { type: "string" },
-                final_cartao: { type: "string" },
-                bandeira: { type: "string", enum: ["visa", "mastercard", "elo", "amex"] },
-                tipo_funcao: { type: "string", enum: ["debito", "credito", "multiplo"] },
-                formato: { type: "string", enum: ["fisico", "virtual"] },
-                limite_total: { type: "number" },
-                dia_fechamento: { type: "number" },
-                dia_vencimento: { type: "number" },
-                data_validade: { type: "string" },
-                banco_ref: { type: "string" },
-                missing: { type: "string" },
-              },
-              required: ["status"],
+      tools: [{
+        type: "function",
+        function: {
+          name: "extract_card",
+          description: "Extract card data",
+          parameters: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["complete", "incomplete"] },
+              apelido: { type: "string" },
+              final_cartao: { type: "string" },
+              bandeira: { type: "string", enum: ["visa", "mastercard", "elo", "amex"] },
+              tipo_funcao: { type: "string", enum: ["debito", "credito", "multiplo"] },
+              formato: { type: "string", enum: ["fisico", "virtual"] },
+              limite_total: { type: "number" },
+              dia_fechamento: { type: "number" },
+              dia_vencimento: { type: "number" },
+              data_validade: { type: "string" },
+              banco_ref: { type: "string" },
+              missing: { type: "string" },
             },
+            required: ["status"],
           },
         },
-      ],
+      }],
       tool_choice: { type: "function", function: { name: "extract_card" } },
     }),
   });
-
   if (!response.ok) return null;
   const data = await response.json();
   const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
@@ -1028,48 +1256,39 @@ async function extractCardData(text: string, userId: string, supabase: any, apiK
 async function extractRecurrenceData(text: string, userId: string, supabase: any, apiKey: string) {
   const response = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
-        {
-          role: "system",
-          content: `Extraia dados de uma conta recorrente/fixa. Campos obrigatórios: nome, dia_vencimento (1-31). Opcionais: valor_estimado, eh_variavel (true se o valor muda todo mês como conta de luz), origem (email/site/pix/boleto/debito_automatico/dinheiro/cartao), banco_ref, cartao_ref, categoria_ref. Se faltar obrigatório, retorne status "incomplete" com campo missing.`,
-        },
+        { role: "system", content: `Extraia dados de uma conta recorrente/fixa. Campos obrigatórios: nome, dia_vencimento (1-31). Opcionais: valor_estimado, eh_variavel, origem (email/site/pix/boleto/debito_automatico/dinheiro/cartao), banco_ref, cartao_ref, categoria_ref. Se faltar obrigatório, retorne status "incomplete" com campo missing.` },
         { role: "user", content: text },
       ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "extract_recurrence",
-            description: "Extract recurrence data from user message",
-            parameters: {
-              type: "object",
-              properties: {
-                status: { type: "string", enum: ["complete", "incomplete"] },
-                nome: { type: "string" },
-                valor_estimado: { type: "number" },
-                dia_vencimento: { type: "number" },
-                eh_variavel: { type: "boolean" },
-                origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
-                banco_ref: { type: "string" },
-                cartao_ref: { type: "string" },
-                categoria_ref: { type: "string" },
-                missing: { type: "string" },
-              },
-              required: ["status"],
+      tools: [{
+        type: "function",
+        function: {
+          name: "extract_recurrence",
+          description: "Extract recurrence data",
+          parameters: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["complete", "incomplete"] },
+              nome: { type: "string" },
+              valor_estimado: { type: "number" },
+              dia_vencimento: { type: "number" },
+              eh_variavel: { type: "boolean" },
+              origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
+              banco_ref: { type: "string" },
+              cartao_ref: { type: "string" },
+              categoria_ref: { type: "string" },
+              missing: { type: "string" },
             },
+            required: ["status"],
           },
         },
-      ],
+      }],
       tool_choice: { type: "function", function: { name: "extract_recurrence" } },
     }),
   });
-
   if (!response.ok) return null;
   const data = await response.json();
   const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
@@ -1083,84 +1302,65 @@ async function extractTransactionData(text: string, userId: string, supabase: an
 
   const response = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
         {
           role: "system",
-          content: `Você é um extrator de dados financeiros. Analise a mensagem do usuário e extraia informações de transações financeiras.
-REGRAS RÍGIDAS:
+          content: `Você é um extrator de dados financeiros. Analise a mensagem e extraia dados de transação.
+REGRAS:
 - Se NÃO for sobre finanças, retorne status "not_financial"
-- Para retornar "complete" é OBRIGATÓRIO ter: descrição, valor, forma de pagamento (origem) e categoria
-- Se faltar valor, descrição, forma de pagamento ou categoria, retorne status "incomplete" com missing_question perguntando o que falta
-- Se a forma de pagamento for "cartao", OBRIGATORIAMENTE pergunte os 4 últimos dígitos do cartão (cartao_ref) se não informado
-- Se a forma de pagamento for "pix" ou "dinheiro", OBRIGATORIAMENTE pergunte o banco de origem (banco_ref) se não informado
-- TODAS as datas devem ser retornadas no formato YYYY-MM-DD
-- Datas relativas: "hoje" = ${today}, "ontem" = calcule, "dia 15" = dia 15 do mês atual
-- Interprete datas brasileiras: "15/04/2026" = 2026-04-15, "dia 10" = ${today.substring(0, 8)}10
-- Valores: interprete "150", "R$ 150", "cento e cinquenta" como 150.00
-- Se mencionar PIX, defina origem como "pix"
-- Se mencionar cartão, extraia a referência (nome ou últimos 4 dígitos)
+- Para "complete": OBRIGATÓRIO ter descrição e valor
+- Datas no formato YYYY-MM-DD. Hoje = ${today}. Datas brasileiras: "15/04/2026" = 2026-04-15
+- Valores: "150", "R$ 150", "cento e cinquenta" = 150.00
+- Se mencionar PIX, origem = "pix"
+- Se mencionar cartão, extraia cartao_ref
 - Se disser "já paguei" ou "paguei", status_pagamento = "pago"
-- categoria_tipo: fixa (recorrente), avulsa (única), variavel (dia-a-dia), divida (parcelamento)
-- Sempre pergunte a categoria da compra se não informada (ex: Software, Escritório, Marketing, etc.)`,
+- NÃO pergunte sobre categoria, origem ou recorrência (o sistema cuida disso)
+- Apenas extraia: descricao, valor, data_vencimento, status_pagamento`,
         },
         { role: "user", content: text },
       ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "extract_transaction",
-            description: "Extract transaction data from user message",
-            parameters: {
-              type: "object",
-              properties: {
-                status: { type: "string", enum: ["complete", "incomplete", "not_financial"] },
-                descricao: { type: "string" },
-                valor: { type: "number" },
-                data_vencimento: { type: "string", description: "YYYY-MM-DD" },
-                data_pagamento: { type: "string", description: "YYYY-MM-DD if already paid" },
-                status_pagamento: { type: "string", enum: ["pendente", "pago"] },
-                categoria_tipo: { type: "string", enum: ["fixa", "avulsa", "variavel", "divida"] },
-                origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
-                cartao_ref: { type: "string", description: "Card name or last 4 digits" },
-                banco_ref: { type: "string", description: "Bank name" },
-                categoria_ref: { type: "string", description: "Category name" },
-                missing_question: { type: "string", description: "Question to ask if incomplete" },
-              },
-              required: ["status"],
+      tools: [{
+        type: "function",
+        function: {
+          name: "extract_transaction",
+          description: "Extract transaction data",
+          parameters: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["complete", "incomplete", "not_financial"] },
+              descricao: { type: "string" },
+              valor: { type: "number" },
+              data_vencimento: { type: "string" },
+              data_pagamento: { type: "string" },
+              status_pagamento: { type: "string", enum: ["pendente", "pago"] },
+              categoria_tipo: { type: "string", enum: ["fixa", "avulsa", "variavel", "divida"] },
+              origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
+              cartao_ref: { type: "string" },
+              banco_ref: { type: "string" },
+              categoria_ref: { type: "string" },
+              subcategoria: { type: "string" },
+              missing_question: { type: "string" },
             },
+            required: ["status"],
           },
         },
-      ],
+      }],
       tool_choice: { type: "function", function: { name: "extract_transaction" } },
     }),
   });
 
-  if (!response.ok) {
-    console.error("AI extraction failed:", response.status);
-    return null;
-  }
-
+  if (!response.ok) { console.error("AI extraction failed:", response.status); return null; }
   const data = await response.json();
   const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
   if (!toolCall) return null;
-
-  try {
-    return JSON.parse(toolCall.function.arguments);
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(toolCall.function.arguments); } catch { return null; }
 }
 
 // ─── BI QUERY HANDLER ───
 async function handleBIQuery(question: string, userId: string, supabase: any, apiKey: string) {
-  // Fetch recent financial data for context
   const now = new Date();
   const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().split("T")[0];
 
@@ -1173,41 +1373,19 @@ async function handleBIQuery(question: string, userId: string, supabase: any, ap
     .order("data_vencimento", { ascending: false })
     .limit(100);
 
-  const { data: bancos } = await supabase
-    .from("bancos")
-    .select("nome, saldo_atual")
-    .eq("user_id", userId);
+  const { data: bancos } = await supabase.from("bancos").select("nome, saldo_atual").eq("user_id", userId);
+  const { data: cartoes } = await supabase.from("cartoes").select("apelido, limite_total, limite_disponivel").eq("user_id", userId).is("deleted_at", null);
 
-  const { data: cartoes } = await supabase
-    .from("cartoes")
-    .select("apelido, limite_total, limite_disponivel")
-    .eq("user_id", userId)
-    .is("deleted_at", null);
-
-  const context = JSON.stringify({
-    transacoes_recentes: recentTxs || [],
-    bancos: bancos || [],
-    cartoes: cartoes || [],
-    data_atual: now.toISOString().split("T")[0],
-  });
+  const context = JSON.stringify({ transacoes_recentes: recentTxs || [], bancos: bancos || [], cartoes: cartoes || [], data_atual: now.toISOString().split("T")[0] });
 
   const response = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
-        {
-          role: "system",
-          content: `Você é um assistente financeiro. Responda perguntas sobre finanças do usuário baseado nos dados fornecidos. Seja direto e use emojis. Se não tiver dados suficientes, diga. NUNCA invente números. Responda em português do Brasil. Formate valores como R$ X.XXX,XX.`,
-        },
-        {
-          role: "user",
-          content: `Dados financeiros:\n${context}\n\nPergunta: ${question}`,
-        },
+        { role: "system", content: `Você é um assistente financeiro. Responda perguntas sobre finanças baseado nos dados fornecidos. Seja direto, use emojis. NUNCA invente números. Responda em português do Brasil. Formate valores como R$ X.XXX,XX. Datas no formato dd/mm/aaaa.` },
+        { role: "user", content: `Dados:\n${context}\n\nPergunta: ${question}` },
       ],
     }),
   });
@@ -1218,16 +1396,7 @@ async function handleBIQuery(question: string, userId: string, supabase: any, ap
 }
 
 // ─── ORPHAN FILE HANDLER ───
-async function handleOrphanFile(
-  chatId: number,
-  userId: string,
-  fileUrl: string,
-  fileName: string,
-  supabase: any,
-  lovableKey: string,
-  telegramKey: string
-) {
-  // Find recent transactions without comprovante
+async function handleOrphanFile(chatId: number, userId: string, fileUrl: string, fileName: string, supabase: any, lovableKey: string, telegramKey: string) {
   const { data: pendingTxs } = await supabase
     .from("transacoes")
     .select("id, descricao, valor, data_vencimento")
@@ -1238,25 +1407,20 @@ async function handleOrphanFile(
     .limit(20);
 
   if (!pendingTxs?.length) {
-    await sendTelegram(chatId, "📎 Arquivo recebido, mas não encontrei transações para vincular. Envie junto com uma descrição.", lovableKey, telegramKey);
+    await sendTelegram(chatId, "📎 Arquivo recebido, mas não encontrei transações para vincular.", lovableKey, telegramKey);
     return jsonResponse({ ok: true });
   }
 
-  // Check which already have comprovantes
   const txIds = pendingTxs.map((t: any) => t.id);
-  const { data: existingComps } = await supabase
-    .from("comprovantes")
-    .select("transacao_id")
-    .in("transacao_id", txIds);
+  const { data: existingComps } = await supabase.from("comprovantes").select("transacao_id").in("transacao_id", txIds);
   const compSet = new Set((existingComps || []).map((c: any) => c.transacao_id));
 
   const withoutComp = pendingTxs.filter((t: any) => !compSet.has(t.id));
   if (!withoutComp.length) {
-    await sendTelegram(chatId, "📎 Arquivo salvo, mas todas as transações recentes já possuem comprovante.", lovableKey, telegramKey);
+    await sendTelegram(chatId, "📎 Todas as transações recentes já possuem comprovante.", lovableKey, telegramKey);
     return jsonResponse({ ok: true });
   }
 
-  // Link to most recent transaction without comprovante
   const target = withoutComp[0];
   await supabase.from("comprovantes").insert({
     transacao_id: target.id,
@@ -1266,28 +1430,17 @@ async function handleOrphanFile(
     uploaded_by: userId,
   });
 
-  const dt = new Date(target.data_vencimento).toLocaleDateString("pt-BR");
-  await sendTelegram(
-    chatId,
-    `📎 Comprovante vinculado a:\n${target.descricao} - R$ ${Number(target.valor).toFixed(2)} (${dt})\n\n✅ Vincular corretamente? Responda com a descrição da conta para alterar.`,
-    lovableKey,
-    telegramKey
-  );
-
+  const [y, m, d] = target.data_vencimento.split("-");
+  await sendTelegram(chatId, `📎 Comprovante vinculado a:\n${target.descricao} - R$ ${Number(target.valor).toFixed(2)} (${d}/${m}/${y})`, lovableKey, telegramKey);
   return jsonResponse({ ok: true });
 }
 
 // ─── AUDIO TRANSCRIPTION ───
 async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: string, openaiKey: string): Promise<string | null> {
   try {
-    // Download audio file
     const fileResponse = await fetch(`${GATEWAY_URL}/getFile`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${lovableKey}`,
-        "X-Connection-Api-Key": telegramKey,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${lovableKey}`, "X-Connection-Api-Key": telegramKey, "Content-Type": "application/json" },
       body: JSON.stringify({ file_id: fileId }),
     });
     const fileData = await fileResponse.json();
@@ -1295,16 +1448,11 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
     if (!filePath) return null;
 
     const downloadResp = await fetch(`${GATEWAY_URL}/file/${filePath}`, {
-      headers: {
-        Authorization: `Bearer ${lovableKey}`,
-        "X-Connection-Api-Key": telegramKey,
-      },
+      headers: { Authorization: `Bearer ${lovableKey}`, "X-Connection-Api-Key": telegramKey },
     });
     if (!downloadResp.ok) return null;
 
     const audioBytes = await downloadResp.arrayBuffer();
-
-    // Use OpenAI Whisper API for transcription
     const formData = new FormData();
     formData.append("file", new Blob([audioBytes], { type: "audio/ogg" }), "audio.ogg");
     formData.append("model", "whisper-1");
@@ -1312,9 +1460,7 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
 
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${openaiKey}`,
-      },
+      headers: { Authorization: `Bearer ${openaiKey}` },
       body: formData,
     });
 
@@ -1330,43 +1476,20 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
 // ─── TELEGRAM SEND ───
 async function sendTelegram(chatId: number, text: string, lovableKey: string, telegramKey: string, parseMode?: string) {
   const primaryAttempt = await postTelegramMessage(chatId, text, lovableKey, telegramKey, parseMode);
-
   if (primaryAttempt.ok) return primaryAttempt;
 
-  console.error("Telegram send failed on primary attempt", {
-    chatId,
-    parseMode,
-    status: primaryAttempt.status,
-    body: primaryAttempt.body,
-  });
+  console.error("Telegram send failed", { chatId, parseMode, status: primaryAttempt.status });
 
-  if (!parseMode) {
-    throw new Error(`Telegram send failed (${primaryAttempt.status}): ${primaryAttempt.body}`);
-  }
+  if (!parseMode) throw new Error(`Telegram send failed (${primaryAttempt.status})`);
 
   const fallbackAttempt = await postTelegramMessage(chatId, text, lovableKey, telegramKey);
-  if (fallbackAttempt.ok) {
-    console.warn("Telegram send succeeded without parse_mode fallback", { chatId, parseMode });
-    return fallbackAttempt;
-  }
+  if (fallbackAttempt.ok) return fallbackAttempt;
 
-  console.error("Telegram send failed on fallback attempt", {
-    chatId,
-    status: fallbackAttempt.status,
-    body: fallbackAttempt.body,
-  });
-
-  throw new Error(
-    `Telegram send failed (${primaryAttempt.status}/${fallbackAttempt.status}): ${fallbackAttempt.body || primaryAttempt.body}`
-  );
+  throw new Error(`Telegram send failed (${primaryAttempt.status}/${fallbackAttempt.status})`);
 }
 
 async function postTelegramMessage(chatId: number, text: string, lovableKey: string, telegramKey: string, parseMode?: string) {
-  const payload: Record<string, unknown> = {
-    chat_id: chatId,
-    text,
-  };
-
+  const payload: Record<string, unknown> = { chat_id: chatId, text };
   if (parseMode) payload.parse_mode = parseMode;
 
   const response = await fetch(`${GATEWAY_URL}/sendMessage`, {
@@ -1380,36 +1503,15 @@ async function postTelegramMessage(chatId: number, text: string, lovableKey: str
   });
 
   const body = await response.text();
-
   try {
     const parsed = body ? JSON.parse(body) : null;
-    if (!response.ok || parsed?.ok === false) {
-      return {
-        ok: false,
-        status: response.status,
-        body: body || response.statusText,
-      };
-    }
+    if (!response.ok || parsed?.ok === false) return { ok: false, status: response.status, body };
   } catch {
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        body: body || response.statusText,
-      };
-    }
+    if (!response.ok) return { ok: false, status: response.status, body };
   }
-
-  return {
-    ok: true,
-    status: response.status,
-    body,
-  };
+  return { ok: true, status: response.status, body };
 }
 
 function jsonResponse(data: any, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
