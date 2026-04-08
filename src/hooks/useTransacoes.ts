@@ -272,6 +272,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     createTransaction,
     createInstallments,
     createBoletoInstallments,
+    updateTransaction,
     payTransaction,
     createPixPayment,
   };
