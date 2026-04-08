@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const GATEWAY_URL = "https://connector-gateway.lovable.dev/telegram";
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const AI_GATEWAY = "https://api.openai.com/v1/chat/completions";
+const AI_MODEL = "gpt-4o-mini";
 
 Deno.serve(async (req) => {
   try {
@@ -13,6 +14,7 @@ Deno.serve(async (req) => {
     const text = message.text ?? "";
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+    const OPENAI_KEY = Deno.env.get("OPENIA_API_KEY")!;
     const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY")!;
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -43,14 +45,14 @@ Deno.serve(async (req) => {
 
     // ─── COMMAND ROUTING ───
     if (text.startsWith("/")) {
-      return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
     }
 
     // ─── VOICE MESSAGE → Transcription via AI ───
     let processedText = text;
     if (message.voice || message.audio) {
       const fileId = message.voice?.file_id || message.audio?.file_id;
-      processedText = await transcribeAudio(fileId, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      processedText = await transcribeAudio(fileId, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
       if (!processedText) {
         await sendTelegram(chatId, "❌ Não consegui transcrever o áudio. Tente enviar como texto.", LOVABLE_API_KEY, TELEGRAM_API_KEY);
         return jsonResponse({ ok: true });
@@ -112,11 +114,11 @@ Deno.serve(async (req) => {
     }
 
     // ─── NLP: Extract transaction data via AI ───
-    const extraction = await extractTransactionData(processedText, userId, supabase, LOVABLE_API_KEY);
+    const extraction = await extractTransactionData(processedText, userId, supabase, OPENAI_KEY);
 
     if (!extraction || extraction.status === "not_financial") {
       // It's a general query — handle as ad-hoc BI question
-      const answer = await handleBIQuery(processedText, userId, supabase, LOVABLE_API_KEY);
+      const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
       await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
       return jsonResponse({ ok: true });
     }
@@ -248,7 +250,8 @@ async function handleCommand(
   userRole: string,
   supabase: any,
   lovableKey: string,
-  telegramKey: string
+  telegramKey: string,
+  openaiKey: string
 ) {
   const [cmd, ...args] = text.split(" ");
   const argStr = args.join(" ").trim();
@@ -486,7 +489,7 @@ async function handleCommand(
         break;
       }
 
-      const cardExtraction = await extractCardData(argStr, userId, supabase, lovableKey);
+      const cardExtraction = await extractCardData(argStr, userId, supabase, openaiKey);
       if (!cardExtraction || cardExtraction.status === "incomplete") {
         await sendTelegram(chatId,
           `❓ Faltam informações do cartão:\n${cardExtraction?.missing || "Envie todos os dados necessários."}`,
@@ -553,7 +556,7 @@ async function handleCommand(
         break;
       }
       // Delegate to NLP extraction (same flow as natural language)
-      const txExtraction = await extractTransactionData(argStr, userId, supabase, lovableKey);
+      const txExtraction = await extractTransactionData(argStr, userId, supabase, openaiKey);
       if (!txExtraction || txExtraction.status === "not_financial") {
         await sendTelegram(chatId, "❌ Não consegui identificar os dados da conta. Tente novamente com mais detalhes.", lovableKey, telegramKey);
         break;
@@ -780,7 +783,7 @@ async function handleCommand(
         break;
       }
 
-      const recExtraction = await extractRecurrenceData(argStr, userId, supabase, lovableKey);
+      const recExtraction = await extractRecurrenceData(argStr, userId, supabase, openaiKey);
       if (!recExtraction || recExtraction.status === "incomplete") {
         await sendTelegram(chatId,
           `❓ Faltam informações:\n${recExtraction?.missing || "Informe nome, valor estimado e dia de vencimento."}`,
@@ -884,7 +887,7 @@ async function extractCardData(text: string, userId: string, supabase: any, apiK
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -939,7 +942,7 @@ async function extractRecurrenceData(text: string, userId: string, supabase: any
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -994,7 +997,7 @@ async function extractTransactionData(text: string, userId: string, supabase: an
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -1099,7 +1102,7 @@ async function handleBIQuery(question: string, userId: string, supabase: any, ap
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: AI_MODEL,
       messages: [
         {
           role: "system",
@@ -1179,7 +1182,7 @@ async function handleOrphanFile(
 }
 
 // ─── AUDIO TRANSCRIPTION ───
-async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: string): Promise<string | null> {
+async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: string, openaiKey: string): Promise<string | null> {
   try {
     // Download audio file
     const fileResponse = await fetch(`${GATEWAY_URL}/getFile`, {
@@ -1205,39 +1208,23 @@ async function transcribeAudio(fileId: string, lovableKey: string, telegramKey: 
 
     const audioBytes = await downloadResp.arrayBuffer();
 
-    // Use AI to transcribe (send as base64 in prompt)
-    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBytes)));
+    // Use OpenAI Whisper API for transcription
+    const formData = new FormData();
+    formData.append("file", new Blob([audioBytes], { type: "audio/ogg" }), "audio.ogg");
+    formData.append("model", "whisper-1");
+    formData.append("language", "pt");
 
-    const response = await fetch(AI_GATEWAY, {
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${lovableKey}`,
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiKey}`,
       },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          {
-            role: "system",
-            content: "Transcreva o áudio em texto. Retorne APENAS a transcrição, sem comentários.",
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Transcreva este áudio:" },
-              {
-                type: "input_audio",
-                input_audio: { data: base64Audio, format: "ogg" },
-              },
-            ],
-          },
-        ],
-      }),
+      body: formData,
     });
 
     if (!response.ok) return null;
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || null;
+    return data.text || null;
   } catch (e) {
     console.error("Transcription error:", e);
     return null;
