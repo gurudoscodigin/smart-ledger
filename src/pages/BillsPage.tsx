@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, CheckCircle2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, FileDown } from "lucide-react";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { useRecorrencias } from "@/hooks/useRecorrencias";
@@ -15,8 +16,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
 
-function AttachButton({ transacaoId }: { transacaoId: string }) {
-  const { upload } = useComprovantes(transacaoId);
+function AttachSection({ transacaoId }: { transacaoId: string }) {
+  const { data: comprovantes, upload } = useComprovantes(transacaoId);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -30,20 +31,45 @@ function AttachButton({ transacaoId }: { transacaoId: string }) {
     e.target.value = "";
   };
 
+  const getFileIcon = (type: string | null) => {
+    if (type?.startsWith("image/")) return <Image className="w-3 h-3" />;
+    return <FileText className="w-3 h-3" />;
+  };
+
+  const getFileUrl = (path: string) => {
+    const { data } = supabase.storage.from("comprovantes").getPublicUrl(path);
+    return data.publicUrl;
+  };
+
   return (
-    <>
+    <div className="flex items-center gap-1.5">
+      {(comprovantes || []).map((c: any) => (
+        <Tooltip key={c.id}>
+          <TooltipTrigger asChild>
+            <a
+              href={getFileUrl(c.file_path)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-7 h-7 rounded-md bg-accent flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-accent/80 transition-colors"
+            >
+              {getFileIcon(c.file_type)}
+            </a>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">{c.file_name}</TooltipContent>
+        </Tooltip>
+      ))}
       <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={handleFile} />
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-primary"
+        className="h-7 w-7 text-muted-foreground hover:text-primary"
         onClick={() => fileRef.current?.click()}
         disabled={upload.isPending}
         title="Anexar comprovante ou NFe"
       >
-        <Paperclip className="w-4 h-4" />
+        <Paperclip className="w-3.5 h-3.5" />
       </Button>
-    </>
+    </div>
   );
 }
 
