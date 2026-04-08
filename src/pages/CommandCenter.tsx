@@ -1,35 +1,44 @@
+import { useState } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, TrendingDown, TrendingUp, Clock, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DollarSign, TrendingDown, TrendingUp, Clock, FileText, Plus, Check } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-
-const burnData = [
-  { name: "Pago", value: 4200, color: "hsl(153, 50%, 45%)" },
-  { name: "Pendente", value: 2800, color: "hsl(217, 70%, 55%)" },
-  { name: "Disponível", value: 3000, color: "hsl(210, 14%, 92%)" },
-];
-
-const recentActivity = [
-  { user: "Maria", action: "Enviou comprovante da Adobe", time: "há 12 min" },
-  { user: "João", action: "Registrou PIX R$ 130,00", time: "há 45 min" },
-  { user: "Sistema", action: "Fatura cartão Roxinho fechou", time: "há 2h" },
-  { user: "Você", action: "Aprovou gasto Shopify", time: "há 3h" },
-];
-
-const upcoming = [
-  { name: "Adobe Creative Cloud", value: "R$ 124,00", date: "12 Abr", status: "pending" },
-  { name: "Shopify Plus", value: "R$ 350,00", date: "15 Abr", status: "pending" },
-  { name: "ChatGPT Plus", value: "R$ 110,00", date: "20 Abr", status: "pending" },
-];
+import { useDashboardSummary, useTransacoes } from "@/hooks/useTransacoes";
+import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 
 export default function CommandCenter() {
+  const { data: summary, isLoading: summaryLoading } = useDashboardSummary();
+  const { data: txData, isLoading: txLoading, payTransaction } = useTransacoes();
+  const [txDialogOpen, setTxDialogOpen] = useState(false);
+
+  const burnData = summary ? [
+    { name: "Pago", value: summary.totalPago, color: "hsl(153, 50%, 45%)" },
+    { name: "Pendente", value: summary.totalPendente, color: "hsl(217, 70%, 55%)" },
+    { name: "Atrasado", value: summary.totalAtrasado, color: "hsl(0, 65%, 55%)" },
+  ].filter(d => d.value > 0) : [];
+
+  const allTransactions = [
+    ...(txData?.overdue || []).map(t => ({ ...t, _overdue: true })),
+    ...(txData?.currentMonth || []),
+  ];
+
+  const upcoming = allTransactions
+    .filter(t => t.status !== "pago")
+    .slice(0, 8);
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Command Center</h1>
-          <p className="text-muted-foreground text-sm mt-1">Visão geral do seu fluxo de caixa</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Command Center</h1>
+            <p className="text-muted-foreground text-sm mt-1">Visão geral do seu fluxo de caixa</p>
+          </div>
+          <Button className="gap-2" onClick={() => setTxDialogOpen(true)}>
+            <Plus className="w-4 h-4" /> Nova Transação
+          </Button>
         </div>
 
         {/* Top Widgets */}
@@ -39,7 +48,9 @@ export default function CommandCenter() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Saldo em Conta</p>
-                  <p className="text-2xl font-semibold mt-1">R$ 12.450,00</p>
+                  <p className="text-2xl font-semibold mt-1">
+                    {summaryLoading ? "..." : `R$ ${(summary?.saldoTotal ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                  </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-status-paid/10 flex items-center justify-center">
                   <DollarSign className="w-5 h-5 text-status-paid" />
@@ -53,7 +64,9 @@ export default function CommandCenter() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Total a Pagar</p>
-                  <p className="text-2xl font-semibold mt-1">R$ 2.800,00</p>
+                  <p className="text-2xl font-semibold mt-1">
+                    {summaryLoading ? "..." : `R$ ${(summary?.totalAPagar ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                  </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-status-late/10 flex items-center justify-center">
                   <TrendingDown className="w-5 h-5 text-status-late" />
@@ -67,7 +80,9 @@ export default function CommandCenter() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Total Pago</p>
-                  <p className="text-2xl font-semibold mt-1">R$ 4.200,00</p>
+                  <p className="text-2xl font-semibold mt-1">
+                    {summaryLoading ? "..." : `R$ ${(summary?.totalPago ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+                  </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
                   <TrendingUp className="w-5 h-5 text-primary" />
@@ -81,96 +96,118 @@ export default function CommandCenter() {
           {/* Burn Rate Chart */}
           <Card className="glass-card lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-base font-medium">Burn Rate — Abril 2026</CardTitle>
+              <CardTitle className="text-base font-medium">
+                Burn Rate — {new Date().toLocaleString("pt-BR", { month: "long", year: "numeric" })}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-center gap-8">
-                <div className="w-52 h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={burnData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={90}
-                        paddingAngle={3}
-                        dataKey="value"
-                        strokeWidth={0}
-                      >
-                        {burnData.map((entry, i) => (
-                          <Cell key={i} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value: number) => `R$ ${value.toLocaleString("pt-BR")}`} />
-                    </PieChart>
-                  </ResponsiveContainer>
+              {burnData.length > 0 ? (
+                <div className="flex items-center justify-center gap-8">
+                  <div className="w-52 h-52">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={burnData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value" strokeWidth={0}>
+                          {burnData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="space-y-3">
+                    {burnData.map((item) => (
+                      <div key={item.name} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-sm text-muted-foreground">{item.name}</span>
+                        <span className="text-sm font-medium ml-auto">R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-3">
-                  {burnData.map((item) => (
-                    <div key={item.name} className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-sm text-muted-foreground">{item.name}</span>
-                      <span className="text-sm font-medium ml-auto">R$ {item.value.toLocaleString("pt-BR")}</span>
-                    </div>
-                  ))}
+              ) : (
+                <div className="flex items-center justify-center h-52 text-muted-foreground text-sm">
+                  Nenhuma transação este mês
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Activity Feed */}
+          {/* Recent Activity */}
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-base font-medium">Feed de Atividades</CardTitle>
+              <CardTitle className="text-base font-medium">Últimas Transações</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentActivity.map((item, i) => (
-                  <div key={i} className="flex items-start gap-3">
+                {allTransactions.slice(0, 5).map((tx) => (
+                  <div key={tx.id} className="flex items-start gap-3">
                     <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
                       <FileText className="w-3.5 h-3.5 text-muted-foreground" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium">{item.user}</span>{" "}
-                        <span className="text-muted-foreground">{item.action}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{tx.descricao}</p>
+                      <p className="text-xs text-muted-foreground">
+                        R$ {Number(tx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        {" · "}
+                        <span className={tx.status === "pago" ? "text-status-paid" : tx.status === "atrasado" ? "text-status-late" : "text-status-pending"}>
+                          {tx.status === "pago" ? "Pago" : tx.status === "atrasado" ? "Atrasado" : "Pendente"}
+                        </span>
                       </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{item.time}</p>
                     </div>
                   </div>
                 ))}
+                {allTransactions.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">Sem atividades recentes</p>
+                )}
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Upcoming */}
+        {/* Upcoming / Overdue */}
         <Card className="glass-card">
           <CardHeader>
-            <CardTitle className="text-base font-medium">Próximos Vencimentos</CardTitle>
+            <CardTitle className="text-base font-medium">Próximos Vencimentos & Atrasados</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {upcoming.map((item, i) => (
-                <div key={i} className="flex items-center justify-between py-2">
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-4 h-4 text-status-pending" />
-                    <span className="text-sm font-medium">{item.name}</span>
+            {upcoming.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">Nenhuma conta pendente 🎉</p>
+            ) : (
+              <div className="space-y-1">
+                {upcoming.map((tx: any) => (
+                  <div key={tx.id} className="flex items-center justify-between py-2.5 border-b border-border/30 last:border-0">
+                    <div className="flex items-center gap-3">
+                      <Clock className={`w-4 h-4 ${tx.status === "atrasado" ? "text-status-late" : "text-status-pending"}`} />
+                      <div>
+                        <span className="text-sm font-medium">{tx.descricao}</span>
+                        {tx._overdue && (
+                          <Badge variant="secondary" className="ml-2 bg-status-late/10 text-status-late text-[10px]">
+                            Atrasado
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                      <span className="text-sm font-medium">R$ {Number(tx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => payTransaction.mutate(tx.id)}
+                        disabled={payTransaction.isPending}
+                      >
+                        <Check className="w-3 h-3" /> Pagar
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm text-muted-foreground">{item.date}</span>
-                    <span className="text-sm font-medium">{item.value}</span>
-                    <Badge variant="secondary" className="bg-status-pending/10 text-status-pending text-xs">
-                      Pendente
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      <CreateTransactionDialog open={txDialogOpen} onOpenChange={setTxDialogOpen} />
     </DashboardLayout>
   );
 }
