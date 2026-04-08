@@ -281,11 +281,17 @@ Deno.serve(async (req) => {
     }
 
     // Build response
+    const fmtDate = (d: string) => {
+      const [y, m, dd] = d.split("-");
+      return `${dd}/${m}/${y}`;
+    };
     let response = `✅ Lançamento registrado!\n\n`;
     response += `📝 ${extraction.descricao}\n`;
     response += `💰 R$ ${Number(extraction.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
-    response += `📅 ${extraction.data_vencimento || "Hoje"}\n`;
+    response += `📅 ${extraction.data_vencimento ? fmtDate(extraction.data_vencimento) : "Hoje"}\n`;
     response += `📊 Status: ${txData.status === "pago" ? "✅ Pago" : "⏳ Pendente"}`;
+    if (extraction.origem) response += `\n💳 Forma: ${extraction.origem}`;
+    if (extraction.categoria_ref) response += `\n🏷️ Categoria: ${extraction.categoria_ref}`;
 
     if (!fileUrl) {
       response += `\n\n⚠️ Comprovante não detectado. Envie a foto/PDF agora ou marcarei como pendente.`;
