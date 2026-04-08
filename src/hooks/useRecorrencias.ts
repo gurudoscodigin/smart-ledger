@@ -29,14 +29,15 @@ export function useRecorrencias() {
       dia_vencimento_padrao: number;
       cartao_id?: string;
       banco_id?: string;
-      origem?: string;
+      origem?: "email" | "site" | "pix" | "boleto" | "debito_automatico" | "dinheiro" | "cartao";
       categoria_id?: string;
       instrucoes_coleta?: string;
       url_site_login?: string;
     }) => {
+      const payload: any = { ...rec, user_id: user!.id };
       const { error } = await supabase
         .from("recorrencias_fixas")
-        .insert({ ...rec, user_id: user!.id });
+        .insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
