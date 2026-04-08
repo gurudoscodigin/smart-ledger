@@ -40,7 +40,7 @@ export default function Login() {
             Bem-vindo de volta
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Acesso restrito por convite
+            Entre com suas credenciais
           </p>
         </div>
 
@@ -101,7 +101,10 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          Acesso apenas por convite do administrador
+          Não tem conta?{" "}
+          <button onClick={() => navigate("/signup")} className="text-primary hover:underline">
+            Criar conta
+          </button>
         </p>
       </div>
     </div>

@@ -289,6 +289,64 @@ export type Database = {
         }
         Relationships: []
       }
+      preferencias_origem: {
+        Row: {
+          banco_id: string | null
+          cartao_id: string | null
+          categoria_id: string | null
+          created_at: string
+          id: string
+          item_nome: string
+          origem: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          banco_id?: string | null
+          cartao_id?: string | null
+          categoria_id?: string | null
+          created_at?: string
+          id?: string
+          item_nome: string
+          origem?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          banco_id?: string | null
+          cartao_id?: string | null
+          categoria_id?: string | null
+          created_at?: string
+          id?: string
+          item_nome?: string
+          origem?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "preferencias_origem_banco_id_fkey"
+            columns: ["banco_id"]
+            isOneToOne: false
+            referencedRelation: "bancos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "preferencias_origem_cartao_id_fkey"
+            columns: ["cartao_id"]
+            isOneToOne: false
+            referencedRelation: "cartoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "preferencias_origem_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -332,6 +390,7 @@ export type Database = {
           instrucoes_coleta: string | null
           nome: string
           origem: Database["public"]["Enums"]["origem_conta"] | null
+          subcategoria: string | null
           updated_at: string
           url_site_login: string | null
           user_id: string
@@ -349,6 +408,7 @@ export type Database = {
           instrucoes_coleta?: string | null
           nome: string
           origem?: Database["public"]["Enums"]["origem_conta"] | null
+          subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
           user_id: string
@@ -366,6 +426,7 @@ export type Database = {
           instrucoes_coleta?: string | null
           nome?: string
           origem?: Database["public"]["Enums"]["origem_conta"] | null
+          subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
           user_id?: string
@@ -467,6 +528,7 @@ export type Database = {
           recorrencia_id: string | null
           registrado_por: string | null
           status: Database["public"]["Enums"]["status_transacao"]
+          subcategoria: string | null
           updated_at: string
           url_site_login: string | null
           user_id: string
@@ -492,6 +554,7 @@ export type Database = {
           recorrencia_id?: string | null
           registrado_por?: string | null
           status?: Database["public"]["Enums"]["status_transacao"]
+          subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
           user_id: string
@@ -517,6 +580,7 @@ export type Database = {
           recorrencia_id?: string | null
           registrado_por?: string | null
           status?: Database["public"]["Enums"]["status_transacao"]
+          subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
           user_id?: string
