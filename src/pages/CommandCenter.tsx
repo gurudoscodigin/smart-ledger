@@ -2,10 +2,9 @@ import { useState } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { DollarSign, TrendingDown, TrendingUp, FileText, Plus, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
+import { DollarSign, TrendingDown, TrendingUp, FileText, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTransacoes } from "@/hooks/useTransacoes";
-import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { useBancos } from "@/hooks/useBancos";
 import { NotificationBell } from "@/components/NotificationBell";
 
@@ -13,7 +12,6 @@ export default function CommandCenter() {
   const now = new Date();
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
   const [viewYear, setViewYear] = useState(now.getFullYear());
-  const [txDialogOpen, setTxDialogOpen] = useState(false);
 
   const isCurrentMonth = viewMonth === now.getMonth() + 1 && viewYear === now.getFullYear();
 
@@ -62,12 +60,7 @@ export default function CommandCenter() {
             <h1 className="text-2xl font-semibold tracking-tight">Command Center</h1>
             <p className="text-muted-foreground text-sm mt-1">Visão geral do seu fluxo de caixa</p>
           </div>
-          <div className="flex items-center gap-2">
-            <NotificationBell />
-            <Button className="gap-2" onClick={() => setTxDialogOpen(true)}>
-              <Plus className="w-4 h-4" /> Nova Transação
-            </Button>
-          </div>
+          <NotificationBell />
         </div>
 
         {/* Month Navigation */}
@@ -229,8 +222,6 @@ export default function CommandCenter() {
           </Card>
         </div>
       </div>
-
-      <CreateTransactionDialog open={txDialogOpen} onOpenChange={setTxDialogOpen} />
     </DashboardLayout>
   );
 }

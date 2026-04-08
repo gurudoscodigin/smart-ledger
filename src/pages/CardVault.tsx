@@ -3,13 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark, ChevronLeft, ChevronRight, Pencil, Check, X } from "lucide-react";
+import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark, ChevronLeft, ChevronRight, Pencil, Check, X, DollarSign } from "lucide-react";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { CreateCardDialog } from "@/components/CreateCardDialog";
 import { CreateBankDialog } from "@/components/CreateBankDialog";
 import { EditCardDialog } from "@/components/EditCardDialog";
+import { AdjustBalanceDialog } from "@/components/AdjustBalanceDialog";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -45,6 +46,7 @@ export default function CardVault() {
   const [editingTx, setEditingTx] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ descricao: "", valor: "" });
   const [editCard, setEditCard] = useState<any>(null);
+  const [adjustBank, setAdjustBank] = useState<any>(null);
 
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -279,11 +281,17 @@ export default function CardVault() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3">
                             <div className="text-right">
                               <p className="text-xs text-muted-foreground">Fatura cartões</p>
                               <p className="text-sm font-semibold">R$ {faturaTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
                             </div>
+                            {role === "admin" && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                onClick={(e) => { e.stopPropagation(); setAdjustBank(bank); }}>
+                                <DollarSign className="w-4 h-4" />
+                              </Button>
+                            )}
                             {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                           </div>
                         </div>
@@ -342,6 +350,7 @@ export default function CardVault() {
       <CreateCardDialog open={createOpen} onOpenChange={setCreateOpen} />
       <CreateBankDialog open={createBankOpen} onOpenChange={setCreateBankOpen} />
       <EditCardDialog open={!!editCard} onOpenChange={(o) => { if (!o) setEditCard(null); }} card={editCard} />
+      <AdjustBalanceDialog open={!!adjustBank} onOpenChange={(o) => { if (!o) setAdjustBank(null); }} banco={adjustBank} />
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>

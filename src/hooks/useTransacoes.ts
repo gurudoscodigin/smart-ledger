@@ -19,7 +19,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
   const query = useQuery({
     queryKey: ["transacoes", month, year],
     queryFn: async () => {
-      // Current month transactions
       const { data: currentMonth, error: err1 } = await supabase
         .from("transacoes")
         .select("*, categorias(nome, eh_colaborador), cartoes(apelido, final_cartao), bancos(nome)")
@@ -29,7 +28,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
         .order("data_vencimento");
       if (err1) throw err1;
 
-      // Overdue from previous months
       const { data: overdue, error: err2 } = await supabase
         .from("transacoes")
         .select("*, categorias(nome, eh_colaborador), cartoes(apelido, final_cartao), bancos(nome)")
@@ -61,7 +59,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Credit card installment engine
   const createInstallments = useMutation({
     mutationFn: async (params: {
       descricao: string;
@@ -75,7 +72,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
       const { descricao, valorTotal, parcelas, cartaoId, categoriaId, categoriaTipo, diaCobranca } = params;
       const valorParcela = Math.round((valorTotal / parcelas) * 100) / 100;
 
-      // Get card info for cut-off date logic
       const { data: cartao, error: cartaoErr } = await supabase
         .from("cartoes")
         .select("dia_fechamento, dia_vencimento, limite_disponivel")
@@ -87,19 +83,11 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
       const transactions = [];
 
       for (let i = 0; i < parcelas; i++) {
-        // Calculate which invoice month this installment falls into
         let invoiceMonth = today.getMonth() + i;
         let invoiceYear = today.getFullYear();
-
-        // If charge day is after cut-off, it goes to next month's invoice
-        if (diaCobranca > cartao.dia_fechamento) {
-          invoiceMonth += 1;
-        }
-
-        // Normalize month/year
+        if (diaCobranca > cartao.dia_fechamento) invoiceMonth += 1;
         invoiceYear += Math.floor(invoiceMonth / 12);
         invoiceMonth = invoiceMonth % 12;
-
         const vencimento = new Date(invoiceYear, invoiceMonth, cartao.dia_vencimento);
 
         transactions.push({
@@ -116,11 +104,9 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
         });
       }
 
-      // Insert all installment transactions
       const { error: txErr } = await supabase.from("transacoes").insert(transactions);
       if (txErr) throw txErr;
 
-      // Block full amount from card limit immediately
       const newLimit = cartao.limite_disponivel - valorTotal;
       const { error: cardErr } = await supabase
         .from("cartoes")
@@ -136,7 +122,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Boleto/financing installments (no limit impact)
   const createBoletoInstallments = useMutation({
     mutationFn: async (params: {
       descricao: string;
@@ -145,7 +130,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
       idContrato: string;
       bancoId?: string;
       categoriaId?: string;
-      datas: string[]; // array of due dates
+      datas: string[];
     }) => {
       const { descricao, valorTotal, parcelas, idContrato, bancoId, categoriaId, datas } = params;
       const valorParcela = Math.round((valorTotal / parcelas) * 100) / 100;
@@ -174,7 +159,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Pay transaction — releases card limit if card-linked
   const updateTransaction = useMutation({
     mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; status?: "pendente" | "pago" | "atrasado" | "cancelado"; categoria_tipo?: "fixa" | "avulsa" | "variavel" | "divida"; origem?: "email" | "site" | "pix" | "boleto" | "debito_automatico" | "dinheiro" | "cartao" | null; banco_id?: string | null; cartao_id?: string | null }) => {
       const { error } = await supabase
@@ -205,7 +189,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
         .eq("id", txId);
       if (updateErr) throw updateErr;
 
-      // Release limit if card-linked
       if (tx.cartao_id) {
         const { data: cartao } = await supabase
           .from("cartoes")
@@ -228,7 +211,23 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Quick PIX payment (immediate)
+  // Soft delete — moves to trash
+  const softDeleteTransaction = useMutation({
+    mutationFn: async (txId: string) => {
+      const { error } = await supabase
+        .from("transacoes")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("id", txId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      queryClient.invalidateQueries({ queryKey: ["trash-transacoes"] });
+      toast.success("Transação movida para lixeira");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const createPixPayment = useMutation({
     mutationFn: async (params: { descricao: string; valor: number; bancoId: string; categoriaId?: string }) => {
       const today = new Date().toISOString().split("T")[0];
@@ -246,7 +245,6 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
       });
       if (txErr) throw txErr;
 
-      // Deduct from bank balance
       const { data: banco } = await supabase
         .from("bancos")
         .select("saldo_atual")
@@ -274,11 +272,11 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     createBoletoInstallments,
     updateTransaction,
     payTransaction,
+    softDeleteTransaction,
     createPixPayment,
   };
 }
 
-// Dashboard summary hook
 export function useDashboardSummary() {
   const { user } = useAuth();
   const now = new Date();
@@ -290,11 +288,9 @@ export function useDashboardSummary() {
   return useQuery({
     queryKey: ["dashboard-summary", month, year],
     queryFn: async () => {
-      // Bank balances
       const { data: bancos } = await supabase.from("bancos").select("saldo_atual");
       const saldoTotal = (bancos || []).reduce((sum, b) => sum + Number(b.saldo_atual), 0);
 
-      // Month transactions
       const { data: txs } = await supabase
         .from("transacoes")
         .select("valor, status")

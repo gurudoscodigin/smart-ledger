@@ -2,7 +2,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, RotateCcw, AlertTriangle, CreditCard, Receipt } from "lucide-react";
+import { Trash2, RotateCcw, AlertTriangle, CreditCard, Receipt, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,8 +14,8 @@ export default function TrashPage() {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [confirmPermanent, setConfirmPermanent] = useState<{ id: string; type: "tx" | "card" } | null>(null);
 
-  // Deleted transactions
   const { data: deletedTxs, isLoading: loadingTxs } = useQuery({
     queryKey: ["trash-transacoes"],
     queryFn: async () => {
@@ -30,7 +30,6 @@ export default function TrashPage() {
     enabled: !!user,
   });
 
-  // Deleted cards
   const { data: deletedCards, isLoading: loadingCards } = useQuery({
     queryKey: ["trash-cartoes"],
     queryFn: async () => {
@@ -45,22 +44,18 @@ export default function TrashPage() {
     enabled: !!user,
   });
 
-  // Restore transaction (with card limit recomposition for installments)
   const restoreTransaction = useMutation({
     mutationFn: async (txId: string) => {
       const tx = deletedTxs?.find(t => t.id === txId);
       if (!tx) throw new Error("Transação não encontrada");
 
-      // Restore the transaction
       const { error } = await supabase
         .from("transacoes")
         .update({ deleted_at: null })
         .eq("id", txId);
       if (error) throw error;
 
-      // If it's an installment linked to a card, recompose the limit
       if (tx.cartao_id && tx.parcela_atual && tx.parcela_total && tx.status !== "pago") {
-        // Re-block the amount from card limit
         const { data: cartao } = await supabase
           .from("cartoes")
           .select("limite_disponivel")
@@ -74,7 +69,6 @@ export default function TrashPage() {
             .eq("id", tx.cartao_id);
         }
 
-        // Also restore sibling installments if they were deleted together
         if (tx.descricao && tx.parcela_total > 1) {
           const baseDesc = tx.descricao.replace(/\s*\(\d+\/\d+\)$/, "");
           const { data: siblings } = await supabase
@@ -91,7 +85,6 @@ export default function TrashPage() {
               .update({ deleted_at: null })
               .in("id", siblingIds);
 
-            // Re-block total remaining from card
             const unpaidTotal = siblings
               .filter(s => s.status !== "pago")
               .reduce((sum, s) => sum + Number(s.valor), 0);
@@ -122,7 +115,6 @@ export default function TrashPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Restore card
   const restoreCard = useMutation({
     mutationFn: async (cardId: string) => {
       const { error } = await supabase
@@ -139,6 +131,33 @@ export default function TrashPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Permanent delete
+  const permanentDeleteTx = useMutation({
+    mutationFn: async (txId: string) => {
+      // Delete comprovantes first
+      await supabase.from("comprovantes").delete().eq("transacao_id", txId);
+      const { error } = await supabase.from("transacoes").delete().eq("id", txId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["trash-transacoes"] });
+      toast.success("Transação excluída permanentemente");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const permanentDeleteCard = useMutation({
+    mutationFn: async (cardId: string) => {
+      const { error } = await supabase.from("cartoes").delete().eq("id", cardId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["trash-cartoes"] });
+      toast.success("Cartão excluído permanentemente");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const daysUntilPermanent = (deletedAt: string) => {
     const deleted = new Date(deletedAt);
     const expiry = new Date(deleted.getTime() + 30 * 86400000);
@@ -148,6 +167,12 @@ export default function TrashPage() {
 
   const isLoading = loadingTxs || loadingCards;
   const totalItems = (deletedTxs?.length || 0) + (deletedCards?.length || 0);
+
+  // Items expiring soon (< 3 days)
+  const expiringSoon = [
+    ...(deletedTxs || []).filter(t => daysUntilPermanent(t.deleted_at!) <= 3),
+    ...(deletedCards || []).filter(c => daysUntilPermanent(c.deleted_at!) <= 3),
+  ];
 
   return (
     <DashboardLayout>
@@ -164,6 +189,20 @@ export default function TrashPage() {
           </Badge>
         </div>
 
+        {/* Expiring soon warning */}
+        {expiringSoon.length > 0 && (
+          <Card className="border-amber-500/30 bg-amber-500/5">
+            <CardContent className="py-3 px-5">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <span className="text-sm font-medium text-amber-600">
+                  {expiringSoon.length} item(ns) serão excluídos permanentemente em breve
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {isLoading ? (
           <div className="flex justify-center py-20">
             <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -177,7 +216,6 @@ export default function TrashPage() {
           </Card>
         ) : (
           <>
-            {/* Deleted Cards */}
             {deletedCards && deletedCards.length > 0 && (
               <Card className="glass-card">
                 <CardHeader>
@@ -202,19 +240,18 @@ export default function TrashPage() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs text-muted-foreground">
-                              {days > 0 ? `${days}d restantes` : "Expirando..."}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs ${days <= 3 ? "text-amber-500 font-medium" : "text-muted-foreground"}`}>
+                              {days > 0 ? `${days}d` : "Expirando"}
                             </span>
+                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                              onClick={() => restoreCard.mutate(card.id)} disabled={restoreCard.isPending}>
+                              <RotateCcw className="w-3 h-3" /> Restaurar
+                            </Button>
                             {role === "admin" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs gap-1"
-                                onClick={() => restoreCard.mutate(card.id)}
-                                disabled={restoreCard.isPending}
-                              >
-                                <RotateCcw className="w-3 h-3" /> Restaurar
+                              <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+                                onClick={() => setConfirmPermanent({ id: card.id, type: "card" })}>
+                                <XCircle className="w-3 h-3" /> Excluir
                               </Button>
                             )}
                           </div>
@@ -226,7 +263,6 @@ export default function TrashPage() {
               </Card>
             )}
 
-            {/* Deleted Transactions */}
             {deletedTxs && deletedTxs.length > 0 && (
               <Card className="glass-card">
                 <CardHeader>
@@ -254,24 +290,26 @@ export default function TrashPage() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2">
                             {isInstallment && (
                               <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary">
-                                <AlertTriangle className="w-3 h-3 mr-1" /> Parcelamento
+                                Parcelamento
                               </Badge>
                             )}
-                            <span className="text-xs text-muted-foreground">
+                            <span className={`text-xs ${days <= 3 ? "text-amber-500 font-medium" : "text-muted-foreground"}`}>
                               {days > 0 ? `${days}d` : "!"}
                             </span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs gap-1"
+                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
                               onClick={() => isInstallment ? setConfirmRestore(tx.id) : restoreTransaction.mutate(tx.id)}
-                              disabled={restoreTransaction.isPending}
-                            >
+                              disabled={restoreTransaction.isPending}>
                               <RotateCcw className="w-3 h-3" /> Restaurar
                             </Button>
+                            {role === "admin" && (
+                              <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+                                onClick={() => setConfirmPermanent({ id: tx.id, type: "tx" })}>
+                                <XCircle className="w-3 h-3" /> Excluir
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
@@ -298,6 +336,29 @@ export default function TrashPage() {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (confirmRestore) restoreTransaction.mutate(confirmRestore); setConfirmRestore(null); }}>
               Restaurar Tudo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm permanent delete */}
+      <AlertDialog open={!!confirmPermanent} onOpenChange={() => setConfirmPermanent(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir permanentemente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação é irreversível. O item será removido definitivamente do sistema e não poderá ser recuperado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (confirmPermanent?.type === "tx") permanentDeleteTx.mutate(confirmPermanent.id);
+                else if (confirmPermanent?.type === "card") permanentDeleteCard.mutate(confirmPermanent.id);
+                setConfirmPermanent(null);
+              }}>
+              Excluir para sempre
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
