@@ -875,6 +875,114 @@ async function handleCommand(
   return jsonResponse({ ok: true });
 }
 
+// ─── CARD DATA EXTRACTION ───
+async function extractCardData(text: string, userId: string, supabase: any, apiKey: string) {
+  const response = await fetch(AI_GATEWAY, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content: `Extraia dados de um cartão de crédito/débito da mensagem. Campos obrigatórios: apelido, final_cartao (4 dígitos), bandeira (visa/mastercard/elo/amex), tipo_funcao (debito/credito/multiplo), dia_fechamento, dia_vencimento. Opcionais: limite_total, formato (fisico/virtual), data_validade (YYYY-MM-DD, primeiro dia do mês), banco_ref. Se faltar algum obrigatório, retorne status "incomplete" com campo missing.`,
+        },
+        { role: "user", content: text },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "extract_card",
+            description: "Extract card data from user message",
+            parameters: {
+              type: "object",
+              properties: {
+                status: { type: "string", enum: ["complete", "incomplete"] },
+                apelido: { type: "string" },
+                final_cartao: { type: "string" },
+                bandeira: { type: "string", enum: ["visa", "mastercard", "elo", "amex"] },
+                tipo_funcao: { type: "string", enum: ["debito", "credito", "multiplo"] },
+                formato: { type: "string", enum: ["fisico", "virtual"] },
+                limite_total: { type: "number" },
+                dia_fechamento: { type: "number" },
+                dia_vencimento: { type: "number" },
+                data_validade: { type: "string" },
+                banco_ref: { type: "string" },
+                missing: { type: "string" },
+              },
+              required: ["status"],
+            },
+          },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "extract_card" } },
+    }),
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) return null;
+  try { return JSON.parse(toolCall.function.arguments); } catch { return null; }
+}
+
+// ─── RECURRENCE DATA EXTRACTION ───
+async function extractRecurrenceData(text: string, userId: string, supabase: any, apiKey: string) {
+  const response = await fetch(AI_GATEWAY, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content: `Extraia dados de uma conta recorrente/fixa. Campos obrigatórios: nome, dia_vencimento (1-31). Opcionais: valor_estimado, eh_variavel (true se o valor muda todo mês como conta de luz), origem (email/site/pix/boleto/debito_automatico/dinheiro/cartao), banco_ref, cartao_ref, categoria_ref. Se faltar obrigatório, retorne status "incomplete" com campo missing.`,
+        },
+        { role: "user", content: text },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "extract_recurrence",
+            description: "Extract recurrence data from user message",
+            parameters: {
+              type: "object",
+              properties: {
+                status: { type: "string", enum: ["complete", "incomplete"] },
+                nome: { type: "string" },
+                valor_estimado: { type: "number" },
+                dia_vencimento: { type: "number" },
+                eh_variavel: { type: "boolean" },
+                origem: { type: "string", enum: ["email", "site", "pix", "boleto", "debito_automatico", "dinheiro", "cartao"] },
+                banco_ref: { type: "string" },
+                cartao_ref: { type: "string" },
+                categoria_ref: { type: "string" },
+                missing: { type: "string" },
+              },
+              required: ["status"],
+            },
+          },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "extract_recurrence" } },
+    }),
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) return null;
+  try { return JSON.parse(toolCall.function.arguments); } catch { return null; }
+}
+
 // ─── NLP EXTRACTION ───
 async function extractTransactionData(text: string, userId: string, supabase: any, apiKey: string) {
   const today = new Date().toISOString().split("T")[0];
