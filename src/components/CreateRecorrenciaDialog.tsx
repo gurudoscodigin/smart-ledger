@@ -191,9 +191,6 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
                 {(categorias || []).map(c => (
                   <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                 ))}
-                {CATEGORIAS_PADRAO.map(c => (
-                  <SelectItem key={c.value} value={c.value} disabled>{c.label} (criar primeiro)</SelectItem>
-                ))}
               </SelectContent>
             </Select>
           </div>
