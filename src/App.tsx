@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import CommandCenter from "./pages/CommandCenter";
 import CardVault from "./pages/CardVault";
-import Auditor from "./pages/Auditor";
+import ReportsPage from "./pages/ReportsPage";
 import ControlCenter from "./pages/ControlCenter";
 import TrashPage from "./pages/TrashPage";
 import BillsPage from "./pages/BillsPage";
@@ -49,7 +49,7 @@ const App = () => (
             <Route path="/" element={<ProtectedRoute><CommandCenter /></ProtectedRoute>} />
             <Route path="/cards" element={<ProtectedRoute><CardVault /></ProtectedRoute>} />
             <Route path="/bills" element={<ProtectedRoute><BillsPage /></ProtectedRoute>} />
-            <Route path="/auditor" element={<ProtectedRoute><Auditor /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><ControlCenter /></ProtectedRoute>} />
             <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
