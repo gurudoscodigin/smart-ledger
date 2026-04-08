@@ -1063,14 +1063,19 @@ async function extractTransactionData(text: string, userId: string, supabase: an
           content: `Você é um extrator de dados financeiros. Analise a mensagem do usuário e extraia informações de transações financeiras.
 REGRAS RÍGIDAS:
 - Se NÃO for sobre finanças, retorne status "not_financial"
-- Se faltar valor, data ou descrição, retorne status "incomplete" com missing_question
-- Só retorne status "complete" quando tiver pelo menos descrição e valor
-- Datas relativas: "hoje" = ${today}, "ontem" = calcule
+- Para retornar "complete" é OBRIGATÓRIO ter: descrição, valor, forma de pagamento (origem) e categoria
+- Se faltar valor, descrição, forma de pagamento ou categoria, retorne status "incomplete" com missing_question perguntando o que falta
+- Se a forma de pagamento for "cartao", OBRIGATORIAMENTE pergunte os 4 últimos dígitos do cartão (cartao_ref) se não informado
+- Se a forma de pagamento for "pix" ou "dinheiro", OBRIGATORIAMENTE pergunte o banco de origem (banco_ref) se não informado
+- TODAS as datas devem ser retornadas no formato YYYY-MM-DD
+- Datas relativas: "hoje" = ${today}, "ontem" = calcule, "dia 15" = dia 15 do mês atual
+- Interprete datas brasileiras: "15/04/2026" = 2026-04-15, "dia 10" = ${today.substring(0, 8)}10
 - Valores: interprete "150", "R$ 150", "cento e cinquenta" como 150.00
 - Se mencionar PIX, defina origem como "pix"
 - Se mencionar cartão, extraia a referência (nome ou últimos 4 dígitos)
 - Se disser "já paguei" ou "paguei", status_pagamento = "pago"
-- categoria_tipo: fixa (recorrente), avulsa (única), variavel (dia-a-dia), divida (parcelamento)`,
+- categoria_tipo: fixa (recorrente), avulsa (única), variavel (dia-a-dia), divida (parcelamento)
+- Sempre pergunte a categoria da compra se não informada (ex: Software, Escritório, Marketing, etc.)`,
         },
         { role: "user", content: text },
       ],
