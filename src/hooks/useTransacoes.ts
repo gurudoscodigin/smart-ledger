@@ -176,7 +176,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
 
   // Pay transaction — releases card limit if card-linked
   const updateTransaction = useMutation({
-    mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; status?: string; categoria_tipo?: string; origem?: string; banco_id?: string | null; cartao_id?: string | null }) => {
+    mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; status?: "pendente" | "pago" | "atrasado" | "cancelado"; categoria_tipo?: "fixa" | "avulsa" | "variavel" | "divida"; origem?: "email" | "site" | "pix" | "boleto" | "debito_automatico" | "dinheiro" | "cartao" | null; banco_id?: string | null; cartao_id?: string | null }) => {
       const { error } = await supabase
         .from("transacoes")
         .update(updates)
