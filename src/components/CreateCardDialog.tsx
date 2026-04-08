@@ -33,7 +33,7 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
     await create.mutateAsync({
       ...form,
       limite_disponivel: form.limite_total,
-      banco_id: form.banco_id || null,
+      banco_id: form.banco_id,
       data_validade: form.data_validade || null,
     });
     onOpenChange(false);
@@ -102,22 +102,25 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
               <Input type="number" min={1} max={31} value={form.dia_vencimento} onChange={e => setForm(f => ({ ...f, dia_vencimento: Number(e.target.value) }))} required />
             </div>
             <div>
-              <Label>Banco (opcional)</Label>
-              <Select value={form.banco_id} onValueChange={v => setForm(f => ({ ...f, banco_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+              <Label>Banco *</Label>
+              <Select value={form.banco_id} onValueChange={v => setForm(f => ({ ...f, banco_id: v }))} required>
+                <SelectTrigger><SelectValue placeholder="Selecione o banco" /></SelectTrigger>
                 <SelectContent>
                   {(bancos || []).map(b => (
                     <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {!bancos?.length && (
+                <p className="text-xs text-muted-foreground mt-1">Cadastre um banco primeiro na tela de cartões.</p>
+              )}
             </div>
             <div>
               <Label>Validade</Label>
               <Input type="date" value={form.data_validade} onChange={e => setForm(f => ({ ...f, data_validade: e.target.value }))} />
             </div>
           </div>
-          <Button type="submit" className="w-full" disabled={create.isPending}>
+          <Button type="submit" className="w-full" disabled={create.isPending || !form.banco_id}>
             {create.isPending ? "Criando..." : "Criar Cartão"}
           </Button>
         </form>
