@@ -45,14 +45,14 @@ Deno.serve(async (req) => {
 
     // ─── COMMAND ROUTING ───
     if (text.startsWith("/")) {
-      return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      return await handleCommand(text, chatId, userId, userRole, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
     }
 
     // ─── VOICE MESSAGE → Transcription via AI ───
     let processedText = text;
     if (message.voice || message.audio) {
       const fileId = message.voice?.file_id || message.audio?.file_id;
-      processedText = await transcribeAudio(fileId, LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      processedText = await transcribeAudio(fileId, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
       if (!processedText) {
         await sendTelegram(chatId, "❌ Não consegui transcrever o áudio. Tente enviar como texto.", LOVABLE_API_KEY, TELEGRAM_API_KEY);
         return jsonResponse({ ok: true });
@@ -114,11 +114,11 @@ Deno.serve(async (req) => {
     }
 
     // ─── NLP: Extract transaction data via AI ───
-    const extraction = await extractTransactionData(processedText, userId, supabase, LOVABLE_API_KEY);
+    const extraction = await extractTransactionData(processedText, userId, supabase, OPENAI_KEY);
 
     if (!extraction || extraction.status === "not_financial") {
       // It's a general query — handle as ad-hoc BI question
-      const answer = await handleBIQuery(processedText, userId, supabase, LOVABLE_API_KEY);
+      const answer = await handleBIQuery(processedText, userId, supabase, OPENAI_KEY);
       await sendTelegram(chatId, answer, LOVABLE_API_KEY, TELEGRAM_API_KEY);
       return jsonResponse({ ok: true });
     }
