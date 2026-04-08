@@ -3,34 +3,128 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UserPlus, Shield, Clock, Copy, Lock } from "lucide-react";
+import { UserPlus, Shield, Clock, Copy, Lock, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-const users = [
-  { name: "Você (Admin)", email: "admin@empresa.com", telegramId: "ID_001", role: "admin" as const },
-  { name: "Maria Santos", email: "maria@empresa.com", telegramId: "ID_456", role: "supervisor" as const },
-  { name: "João Lima", email: "joao@empresa.com", telegramId: "ID_789", role: "assistente" as const },
-];
-
-const auditLogs = [
-  { action: "Alterou limite do cartão Roxinho para R$ 12.000", user: "Admin", time: "14:00", ip: "192.168.1.10" },
-  { action: "Login bem-sucedido", user: "Maria Santos", time: "13:45", ip: "192.168.1.22" },
-  { action: "Enviou comprovante Adobe", user: "João Lima", time: "12:30", ip: "Telegram" },
-  { action: "Aprovou gasto Shopify R$ 350", user: "Maria Santos", time: "11:20", ip: "192.168.1.22" },
-  { action: "Criou convite para novo membro", user: "Admin", time: "10:00", ip: "192.168.1.10" },
-];
-
 export default function ControlCenter() {
-  const { role } = useAuth();
+  const { user, role } = useAuth();
+  const queryClient = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteRole, setInviteRole] = useState<string>("assistente");
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+
+  // Fetch real users with profiles and roles
+  const { data: users } = useQuery({
+    queryKey: ["control-users"],
+    queryFn: async () => {
+      const { data: profiles, error } = await supabase
+        .from("profiles")
+        .select("user_id, display_name, telegram_id");
+      if (error) throw error;
+
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("user_id, role");
+
+      return (profiles || []).map(p => ({
+        ...p,
+        role: roles?.find(r => r.user_id === p.user_id)?.role || "assistente",
+      }));
+    },
+    enabled: !!user && role === "admin",
+  });
+
+  // Fetch real audit logs
+  const { data: auditLogs } = useQuery({
+    queryKey: ["audit-logs"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("audit_logs")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && role === "admin",
+  });
+
+  // Generate invite
+  const generateInvite = useMutation({
+    mutationFn: async (inviteRole: string) => {
+      const { data, error } = await supabase
+        .from("convites")
+        .insert({ created_by: user!.id, role: inviteRole as any })
+        .select("token")
+        .single();
+      if (error) throw error;
+      return data.token;
+    },
+    onSuccess: (token) => {
+      setGeneratedToken(token);
+      toast.success("Convite gerado!");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Update user role
+  const updateRole = useMutation({
+    mutationFn: async ({ userId, newRole }: { userId: string; newRole: string }) => {
+      const { error } = await supabase
+        .from("user_roles")
+        .update({ role: newRole as any })
+        .eq("user_id", userId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["control-users"] });
+      toast.success("Papel atualizado");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const roleBadgeClass = (r: string) =>
     r === "admin" ? "bg-primary/15 text-primary" :
     r === "supervisor" ? "bg-role-supervisor/20 text-foreground" :
     "bg-muted text-muted-foreground";
+
+  const inviteUrl = generatedToken
+    ? `${window.location.origin}/signup?token=${generatedToken}`
+    : null;
+
+  // Permission matrix
+  const permissions = [
+    { action: "Ver saldo total", admin: true, supervisor: true, assistente: false },
+    { action: "Criar/editar transações", admin: true, supervisor: true, assistente: true },
+    { action: "Deletar transações", admin: true, supervisor: false, assistente: false },
+    { action: "Gerenciar cartões e bancos", admin: true, supervisor: false, assistente: false },
+    { action: "Alterar limites", admin: true, supervisor: false, assistente: false },
+    { action: "Aprovar lançamentos", admin: true, supervisor: true, assistente: false },
+    { action: "Gerenciar usuários", admin: true, supervisor: false, assistente: false },
+    { action: "Ver logs de auditoria", admin: true, supervisor: true, assistente: false },
+    { action: "Configurar APIs e Drive", admin: true, supervisor: false, assistente: false },
+    { action: "Importar planilhas", admin: true, supervisor: true, assistente: false },
+  ];
+
+  if (role !== "admin") {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center py-20">
+          <Card className="glass-card max-w-md">
+            <CardContent className="py-12 text-center">
+              <Lock className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-muted-foreground">Acesso restrito ao Administrador</p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -40,23 +134,56 @@ export default function ControlCenter() {
             <h1 className="text-2xl font-semibold tracking-tight">Control Center</h1>
             <p className="text-muted-foreground text-sm mt-1">Segurança, permissões e auditoria</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge className="bg-status-paid/10 text-status-paid border-0 gap-1">
-              <Lock className="w-3 h-3" />
-              Sessão Segura
-            </Badge>
-          </div>
+          <Badge className="bg-status-paid/10 text-status-paid border-0 gap-1">
+            <Lock className="w-3 h-3" /> Sessão Segura
+          </Badge>
         </div>
+
+        {/* Permission Matrix */}
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="text-base font-medium">Matriz de Permissões</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2 pr-4 text-muted-foreground font-medium">Ação</th>
+                    <th className="text-center py-2 px-3 font-medium">
+                      <Badge className={`text-xs ${roleBadgeClass("admin")}`}>Admin</Badge>
+                    </th>
+                    <th className="text-center py-2 px-3 font-medium">
+                      <Badge className={`text-xs ${roleBadgeClass("supervisor")}`}>Supervisor</Badge>
+                    </th>
+                    <th className="text-center py-2 px-3 font-medium">
+                      <Badge className={`text-xs ${roleBadgeClass("assistente")}`}>Assistente</Badge>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {permissions.map((p, i) => (
+                    <tr key={i} className="border-b border-border/30 last:border-0">
+                      <td className="py-2.5 pr-4">{p.action}</td>
+                      <td className="text-center py-2.5">{p.admin ? "✅" : "❌"}</td>
+                      <td className="text-center py-2.5">{p.supervisor ? "✅" : "❌"}</td>
+                      <td className="text-center py-2.5">{p.assistente ? "✅" : "❌"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* User Management */}
         <Card className="glass-card">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base font-medium">Gestão de Usuários</CardTitle>
-            <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+            <Dialog open={inviteOpen} onOpenChange={(o) => { setInviteOpen(o); if (!o) setGeneratedToken(null); }}>
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-2">
-                  <UserPlus className="w-4 h-4" />
-                  Gerar Convite
+                  <UserPlus className="w-4 h-4" /> Gerar Convite
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -64,17 +191,31 @@ export default function ControlCenter() {
                   <DialogTitle>Convidar Novo Membro</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
-                  <div className="p-4 bg-accent rounded-lg">
-                    <p className="text-xs text-muted-foreground mb-2">Link de convite (expira em 24h)</p>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs bg-background px-3 py-2 rounded border flex-1 truncate">
-                        https://app.fincontrol.com/signup?token=a8f3b2...
-                      </code>
-                      <Button size="sm" variant="outline" onClick={() => toast.success("Link copiado!")}>
-                        <Copy className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">Papel do convidado</label>
+                    <Select value={inviteRole} onValueChange={setInviteRole}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="supervisor">Supervisor</SelectItem>
+                        <SelectItem value="assistente">Assistente</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+                  {inviteUrl ? (
+                    <div className="p-4 bg-accent rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-2">Link de convite (expira em 24h)</p>
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs bg-background px-3 py-2 rounded border flex-1 truncate">{inviteUrl}</code>
+                        <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(inviteUrl); toast.success("Link copiado!"); }}>
+                          <Copy className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button onClick={() => generateInvite.mutate(inviteRole)} disabled={generateInvite.isPending} className="w-full">
+                      {generateInvite.isPending ? "Gerando..." : "Gerar Link de Convite"}
+                    </Button>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     O novo membro precisará vincular seu Telegram ID durante o primeiro acesso.
                   </p>
@@ -84,23 +225,25 @@ export default function ControlCenter() {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {users.map((u, i) => (
-                <div key={i} className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
+              {(users || []).map((u) => (
+                <div key={u.user_id} className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center">
                       <Shield className="w-4 h-4 text-muted-foreground" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium">{u.name}</p>
-                      <p className="text-xs text-muted-foreground">{u.email} · {u.telegramId}</p>
+                      <p className="text-sm font-medium">{u.display_name || "Sem nome"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {u.telegram_id ? `📱 ${u.telegram_id}` : "⚠️ Telegram não vinculado"}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant="secondary" className={`text-xs font-medium capitalize ${roleBadgeClass(u.role)}`}>
                       {u.role}
                     </Badge>
-                    {u.role !== "admin" && (
-                      <Select defaultValue={u.role}>
+                    {u.role !== "admin" && u.user_id !== user?.id && (
+                      <Select defaultValue={u.role} onValueChange={(v) => updateRole.mutate({ userId: u.user_id, newRole: v })}>
                         <SelectTrigger className="w-32 h-8 text-xs">
                           <SelectValue />
                         </SelectTrigger>
@@ -123,21 +266,28 @@ export default function ControlCenter() {
             <CardTitle className="text-base font-medium">Logs de Auditoria</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-1">
-              {auditLogs.map((log, i) => (
-                <div key={i} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
-                  <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+            {!auditLogs?.length ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Nenhum log registrado ainda</p>
+            ) : (
+              <div className="space-y-1">
+                {auditLogs.map((log) => (
+                  <div key={log.id} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
+                    <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm">
+                        <span className="font-medium capitalize">{log.action}</span> em <span className="text-primary">{log.table_name}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {new Date(log.created_at).toLocaleString("pt-BR")}
+                        {log.ip_address && ` · IP: ${log.ip_address}`}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm">{log.action}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {log.user} · {log.time} · IP: {log.ip}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
