@@ -1,0 +1,1 @@
+DELETE FROM transacoes WHERE user_id = '77193628-bdd3-41b5-95e4-15a5176c3590';
