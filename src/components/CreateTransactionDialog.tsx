@@ -11,7 +11,7 @@ import { useBancos } from "@/hooks/useBancos";
 import { useCategorias } from "@/hooks/useCategorias";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
-import { getSubcategorias, hasSubcategorias } from "@/lib/subcategorias";
+import { useSubcategorias } from "@/hooks/useSubcategorias";
 
 interface Props {
   open: boolean;
