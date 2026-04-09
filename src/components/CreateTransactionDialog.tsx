@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -138,13 +138,13 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                 </Select>
               </div>
 
-              {subcategorias.length > 0 && (
+              {(subcategorias || []).length > 0 && (
                 <div><Label>Subcategoria</Label>
                   <Select value={simple.subcategoria} onValueChange={v => setSimple(s => ({ ...s, subcategoria: v }))}>
                     <SelectTrigger><SelectValue placeholder="Selecione a subcategoria" /></SelectTrigger>
                     <SelectContent>
-                      {subcategorias.map(s => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      {(subcategorias || []).map((s: any) => (
+                        <SelectItem key={s.id} value={s.nome}>{s.nome}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
