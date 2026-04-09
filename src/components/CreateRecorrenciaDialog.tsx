@@ -119,14 +119,14 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
             </Select>
           </div>
 
-          {subcategorias.length > 0 && (
+          {(subcategorias || []).length > 0 && (
             <div>
               <Label>Subcategoria</Label>
               <Select value={form.subcategoria} onValueChange={v => set("subcategoria", v)}>
                 <SelectTrigger><SelectValue placeholder="Selecione a subcategoria" /></SelectTrigger>
                 <SelectContent>
-                  {subcategorias.map(s => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  {(subcategorias || []).map((s: any) => (
+                    <SelectItem key={s.id} value={s.nome}>{s.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
