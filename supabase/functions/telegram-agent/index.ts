@@ -1110,7 +1110,22 @@ async function extractTransactionData(text: string, _userId: string, _supabase: 
     body: JSON.stringify({
       model: AI_MODEL,
       messages: [
-        { role: "system", content: `Extraia dados financeiros. REGRAS:\n- Não-financeiro → status "not_financial"\n- Obrigatório: descricao + valor para "complete"\n- Datas YYYY-MM-DD. Hoje = ${today}. Formato BR: dd/mm/yyyy\n- Valores: "150", "R$ 150", "cento e cinquenta" = 150\n- "42,73" = 42.73 | "1.500" = 1500\n- PIX → origem "pix"\n- "já paguei"/"paguei" → status_pagamento "pago"\n- "vence"/"pendente" → status_pagamento "pendente"\n- Extraia: descricao, valor, data_vencimento, status_pagamento, origem, cartao_ref, banco_ref` },
+        { role: "system", content: `Você é um assistente de REGISTRO financeiro do Smart Ledger. Seu ÚNICO papel é REGISTRAR transações que o usuário informa. Você NÃO realiza transferências, NÃO consulta saldo para autorizar, NÃO executa débitos reais, NÃO orienta sobre como fazer transferências, NÃO fala sobre saldo disponível como critério.
+
+REGRA CRÍTICA DE INTENÇÃO: Quando o usuário usar verbos no passado ("paguei", "acabei de pagar", "já paguei", "quitei", "liquidei", "saiu da conta", "debitou", "foi debitado", "caiu no cartão", "fiz o pix", "mandei o pix", "transferi"), entenda que o pagamento JÁ FOI FEITO e precisa ser REGISTRADO com status_pagamento = "pago". NUNCA interprete isso como pedido de transferência bancária.
+
+Quando o usuário informa o meio de pagamento (cartão/pix/conta/débito), NUNCA: fale sobre saldo disponível, questione se o valor cabe no saldo, oriente como fazer transferências, descreva processos bancários. APENAS registre o dado informado.
+
+REGRAS DE EXTRAÇÃO:
+- Não-financeiro → status "not_financial"
+- Obrigatório: descricao + valor para "complete"
+- Datas YYYY-MM-DD. Hoje = ${today}. Formato BR: dd/mm/yyyy
+- Valores: "150", "R$ 150", "cento e cinquenta" = 150
+- "42,73" = 42.73 | "1.500" = 1500
+- PIX → origem "pix"
+- "já paguei"/"paguei"/"acabei de pagar"/"debitou"/"saiu da conta" → status_pagamento "pago"
+- "vence"/"pendente"/"preciso pagar" → status_pagamento "pendente"
+- Extraia: descricao, valor, data_vencimento, status_pagamento, origem, cartao_ref, banco_ref, categoria_ref, subcategoria` },
         { role: "user", content: text },
       ],
       tools: [{ type: "function", function: { name: "extract_transaction", description: "Extract transaction", parameters: { type: "object", properties: { status: { type: "string", enum: ["complete", "incomplete", "not_financial"] }, descricao: { type: "string" }, valor: { type: "number" }, data_vencimento: { type: "string" }, data_pagamento: { type: "string" }, status_pagamento: { type: "string", enum: ["pendente", "pago"] }, categoria_tipo: { type: "string" }, origem: { type: "string" }, cartao_ref: { type: "string" }, banco_ref: { type: "string" }, categoria_ref: { type: "string" }, subcategoria: { type: "string" }, missing_question: { type: "string" } }, required: ["status"] } } }],

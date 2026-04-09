@@ -454,25 +454,12 @@ export default function BillsPage() {
           </div>
         )}
 
-        <Tabs defaultValue="todas">
+        <Tabs defaultValue="fixas">
           <TabsList>
-            <TabsTrigger value="todas" className="gap-1.5">📋 Todas</TabsTrigger>
             <TabsTrigger value="fixas" className="gap-1.5"><CalendarClock className="w-4 h-4" /> Fixas</TabsTrigger>
             <TabsTrigger value="variaveis" className="gap-1.5"><TrendingUp className="w-4 h-4" /> Variáveis</TabsTrigger>
             <TabsTrigger value="avulsas" className="gap-1.5"><Zap className="w-4 h-4" /> Avulsas</TabsTrigger>
           </TabsList>
-
-          {/* All transactions tab */}
-          <TabsContent value="todas" className="space-y-4 pt-4">
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Fixa/Variável</Button>
-              <Button onClick={() => setAvulsaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Avulsa</Button>
-            </div>
-            {renderTxList(allTxs,
-              <FileText className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
-              "Nenhuma conta neste mês"
-            )}
-          </TabsContent>
 
           <TabsContent value="fixas" className="space-y-4 pt-4">
             <div className="flex justify-end">
