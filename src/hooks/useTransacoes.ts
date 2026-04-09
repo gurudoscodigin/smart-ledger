@@ -50,10 +50,27 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
         .select()
         .single();
       if (error) throw error;
+
+      // Deduct card limit if linked to a card
+      if (data.cartao_id) {
+        const { data: card } = await supabase
+          .from("cartoes")
+          .select("limite_disponivel")
+          .eq("id", data.cartao_id)
+          .single();
+        if (card) {
+          await supabase
+            .from("cartoes")
+            .update({ limite_disponivel: card.limite_disponivel - data.valor })
+            .eq("id", data.cartao_id);
+        }
+      }
+
       return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      queryClient.invalidateQueries({ queryKey: ["cartoes"] });
       toast.success("Transação registrada");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -161,6 +178,17 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
 
   const updateTransaction = useMutation({
     mutationFn: async ({ id, ...updates }: { id: string; descricao?: string; valor?: number; data_vencimento?: string; data_pagamento?: string; status?: "pendente" | "pago" | "atrasado" | "cancelado"; categoria_tipo?: "fixa" | "avulsa" | "variavel" | "divida"; origem?: "email" | "site" | "pix" | "boleto" | "debito_automatico" | "dinheiro" | "cartao" | null; banco_id?: string | null; cartao_id?: string | null }) => {
+      // If marking as paid with a card, restore card limit
+      if (updates.status === "pago") {
+        const { data: tx } = await supabase.from("transacoes").select("cartao_id, valor").eq("id", id).single();
+        if (tx?.cartao_id) {
+          const { data: card } = await supabase.from("cartoes").select("limite_disponivel").eq("id", tx.cartao_id).single();
+          if (card) {
+            await supabase.from("cartoes").update({ limite_disponivel: card.limite_disponivel + tx.valor }).eq("id", tx.cartao_id);
+          }
+        }
+      }
+
       const { error } = await supabase
         .from("transacoes")
         .update(updates)
@@ -169,6 +197,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      queryClient.invalidateQueries({ queryKey: ["cartoes"] });
       toast.success("Transação atualizada");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -189,6 +218,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
         .eq("id", txId);
       if (updateErr) throw updateErr;
 
+      // Restore card limit when paying (fatura closed)
       if (tx.cartao_id) {
         const { data: cartao } = await supabase
           .from("cartoes")
@@ -206,6 +236,7 @@ export function useTransacoes(filters?: { month?: number; year?: number; include
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["transacoes"] });
       queryClient.invalidateQueries({ queryKey: ["cartoes"] });
+      queryClient.invalidateQueries({ queryKey: ["comprovantes-check"] });
       toast.success("Pagamento registrado — limite atualizado");
     },
     onError: (e: Error) => toast.error(e.message),
