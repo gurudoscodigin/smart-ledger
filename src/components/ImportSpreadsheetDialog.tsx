@@ -8,6 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
+const PAID_VALUES = ["pago", "paga", "paid", "sim", "yes", "1", "true", "x", "✓"];
+
 const SYSTEM_FIELDS = [
   { key: "descricao", label: "Descrição" },
   { key: "valor", label: "Valor" },
