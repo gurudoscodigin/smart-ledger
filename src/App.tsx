@@ -10,6 +10,7 @@ import ReportsPage from "./pages/ReportsPage";
 import ControlCenter from "./pages/ControlCenter";
 import TrashPage from "./pages/TrashPage";
 import BillsPage from "./pages/BillsPage";
+import CategoriasPage from "./pages/CategoriasPage";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><ControlCenter /></ProtectedRoute>} />
             <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
+            <Route path="/categorias" element={<ProtectedRoute><CategoriasPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

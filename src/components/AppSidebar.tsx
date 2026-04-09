@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, Settings, LogOut, Lock, Trash2, Receipt, BarChart3 } from "lucide-react";
+import { LayoutDashboard, CreditCard, Settings, LogOut, Lock, Trash2, Receipt, BarChart3, FolderTree } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -20,6 +20,7 @@ const items = [
   { title: "Contas", url: "/bills", icon: Receipt },
   { title: "Card Vault", url: "/cards", icon: CreditCard },
   { title: "Relatórios", url: "/reports", icon: BarChart3 },
+  { title: "Categorias", url: "/categorias", icon: FolderTree },
   { title: "Control Center", url: "/settings", icon: Settings },
 ];
 
@@ -29,8 +30,8 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, role } = useAuth();
 
-  const roleBadge = role === "admin" ? "bg-primary/15 text-primary" : role === "supervisor" ? "bg-role-supervisor/20 text-foreground" : "bg-muted text-muted-foreground";
-  const roleLabel = role === "admin" ? "Admin" : role === "supervisor" ? "Supervisor" : "Assistente";
+  const roleBadge = role === "admin" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground";
+  const roleLabel = role === "admin" ? "Admin" : "Assistente";
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">

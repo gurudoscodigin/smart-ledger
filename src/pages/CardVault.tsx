@@ -237,7 +237,7 @@ export default function CardVault() {
           </div>
         </div>
 
-        {(role === "admin" || role === "supervisor") && (
+        {role === "admin" && (
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2" onClick={() => setCreateBankOpen(true)}>
               <Landmark className="w-4 h-4" /> Novo Banco

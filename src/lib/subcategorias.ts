@@ -1,13 +1,15 @@
-// Mapeamento de categorias para subcategorias
-// Se a categoria não está aqui, não tem subcategoria
-export const SUBCATEGORIAS: Record<string, string[]> = {
-  "Marketing": ["Influencer", "UGC", "Tráfego Pago"],
-  "Colaboradores": ["PJ", "Colaborador Fixo"],
+// Legacy compatibility — now fetches from DB via hooks
+// This file is kept for backward compatibility but should be replaced
+// by useSubcategorias hook in components
+
+// Hardcoded fallback for when DB is not available
+const SUBCATEGORIAS_FALLBACK: Record<string, string[]> = {
+  "Custos Fixos": ["Imóvel", "Internet", "Escritório"],
 };
 
 export function getSubcategorias(categoriaNome: string | undefined | null): string[] {
   if (!categoriaNome) return [];
-  return SUBCATEGORIAS[categoriaNome] || [];
+  return SUBCATEGORIAS_FALLBACK[categoriaNome] || [];
 }
 
 export function hasSubcategorias(categoriaNome: string | undefined | null): boolean {

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { useBancos } from "@/hooks/useBancos";
 import { useCategorias } from "@/hooks/useCategorias";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
-import { getSubcategorias, hasSubcategorias } from "@/lib/subcategorias";
+import { useSubcategorias } from "@/hooks/useSubcategorias";
 
 interface Props {
   open: boolean;
@@ -39,12 +39,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
   const [inst, setInst] = useState({ descricao: "", valorTotal: "", parcelas: "2", cartaoId: "", diaCobranca: "10" });
   const [pix, setPix] = useState({ descricao: "", valor: "", bancoId: "" });
 
-  const selectedCategoria = useMemo(() => {
-    if (!simple.categoria_id || !categorias) return null;
-    return categorias.find(c => c.id === simple.categoria_id);
-  }, [simple.categoria_id, categorias]);
-
-  const subcategorias = useMemo(() => getSubcategorias(selectedCategoria?.nome), [selectedCategoria]);
+  const { data: subcategorias } = useSubcategorias(simple.categoria_id || undefined);
 
   const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
   const needsCard = simple.forma_pagamento === "cartao";
@@ -143,13 +138,13 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
                 </Select>
               </div>
 
-              {subcategorias.length > 0 && (
+              {(subcategorias || []).length > 0 && (
                 <div><Label>Subcategoria</Label>
                   <Select value={simple.subcategoria} onValueChange={v => setSimple(s => ({ ...s, subcategoria: v }))}>
                     <SelectTrigger><SelectValue placeholder="Selecione a subcategoria" /></SelectTrigger>
                     <SelectContent>
-                      {subcategorias.map(s => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      {(subcategorias || []).map((s: any) => (
+                        <SelectItem key={s.id} value={s.nome}>{s.nome}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
