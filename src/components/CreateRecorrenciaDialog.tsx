@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { useBancos } from "@/hooks/useBancos";
 import { useCategorias } from "@/hooks/useCategorias";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
-import { getSubcategorias } from "@/lib/subcategorias";
+import { useSubcategorias } from "@/hooks/useSubcategorias";
 
 interface Props {
   open: boolean;
@@ -40,12 +40,7 @@ export function CreateRecorrenciaDialog({ open, onOpenChange }: Props) {
 
   const set = (field: string, value: any) => setForm(f => ({ ...f, [field]: value }));
 
-  const selectedCategoria = useMemo(() => {
-    if (!form.categoria_id || !categorias) return null;
-    return categorias.find(c => c.id === form.categoria_id);
-  }, [form.categoria_id, categorias]);
-
-  const subcategorias = useMemo(() => getSubcategorias(selectedCategoria?.nome), [selectedCategoria]);
+  const { data: subcategorias } = useSubcategorias(form.categoria_id || undefined);
 
   const setFormaPagamento = (v: string) => {
     setForm(f => ({
