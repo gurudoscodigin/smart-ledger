@@ -39,12 +39,7 @@ export function CreateTransactionDialog({ open, onOpenChange }: Props) {
   const [inst, setInst] = useState({ descricao: "", valorTotal: "", parcelas: "2", cartaoId: "", diaCobranca: "10" });
   const [pix, setPix] = useState({ descricao: "", valor: "", bancoId: "" });
 
-  const selectedCategoria = useMemo(() => {
-    if (!simple.categoria_id || !categorias) return null;
-    return categorias.find(c => c.id === simple.categoria_id);
-  }, [simple.categoria_id, categorias]);
-
-  const subcategorias = useMemo(() => getSubcategorias(selectedCategoria?.nome), [selectedCategoria]);
+  const { data: subcategorias } = useSubcategorias(simple.categoria_id || undefined);
 
   const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
   const needsCard = simple.forma_pagamento === "cartao";
