@@ -249,7 +249,7 @@ export default function CardVault() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Card Vault</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Cartões</h1>
             <p className="text-muted-foreground text-sm mt-1">Extrato por cartão e banco</p>
           </div>
           <div className="flex items-center gap-2">
