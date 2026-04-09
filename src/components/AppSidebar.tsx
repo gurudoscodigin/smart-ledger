@@ -1,4 +1,4 @@
-import { LayoutDashboard, CreditCard, Settings, LogOut, Lock, Trash2, Receipt, BarChart3 } from "lucide-react";
+import { LayoutDashboard, CreditCard, Settings, LogOut, Lock, Trash2, Receipt, BarChart3, FolderTree } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -20,6 +20,7 @@ const items = [
   { title: "Contas", url: "/bills", icon: Receipt },
   { title: "Card Vault", url: "/cards", icon: CreditCard },
   { title: "Relatórios", url: "/reports", icon: BarChart3 },
+  { title: "Categorias", url: "/categorias", icon: FolderTree },
   { title: "Control Center", url: "/settings", icon: Settings },
 ];
 
