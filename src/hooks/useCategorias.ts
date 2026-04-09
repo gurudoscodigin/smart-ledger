@@ -56,14 +56,14 @@ export function useCategorias() {
           }
         }
         if (subRows.length > 0) {
-          await supabase.from("subcategorias").insert(subRows);
+          await (supabase as any).from("subcategorias").insert(subRows);
         }
         queryClient.invalidateQueries({ queryKey: ["categorias"] });
         queryClient.invalidateQueries({ queryKey: ["subcategorias"] });
       }
     };
     seed();
-  }, [user, query.isLoading, query.data]);
+  }, [user, query.isLoading, query.data, queryClient]);
 
   const create = useMutation({
     mutationFn: async (params: { nome: string; eh_colaborador?: boolean }) => {
@@ -81,7 +81,6 @@ export function useCategorias() {
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      // Check if there are transactions linked
       const { count } = await supabase
         .from("transacoes")
         .select("id", { count: "exact", head: true })
