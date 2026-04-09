@@ -105,6 +105,10 @@ export function ImportSpreadsheetDialog({ open, onOpenChange }: Props) {
           let val = row[idx]?.trim();
           if (!val) return;
           if (field === "valor") val = val.replace(",", ".");
+          if (field === "status") {
+            tx[field] = PAID_VALUES.includes(val.toLowerCase()) ? "pago" : "pendente";
+            return;
+          }
           tx[field] = field === "valor" ? Number(val) : val;
         });
         if (!tx.data_vencimento) tx.data_vencimento = new Date().toISOString().split("T")[0];
