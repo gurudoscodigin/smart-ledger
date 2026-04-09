@@ -238,7 +238,7 @@ export default function BillsPage() {
                       <div key={tx.id} className="flex items-center justify-between text-sm">
                         <span className="truncate">{tx.descricao}</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>
                           <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
                           <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
                             onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
@@ -264,7 +264,7 @@ export default function BillsPage() {
                       <div key={tx.id} className="flex items-center justify-between text-sm">
                         <span className="truncate">{tx.descricao}</span>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>
+                          <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>
                           <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
                           <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
                             onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
