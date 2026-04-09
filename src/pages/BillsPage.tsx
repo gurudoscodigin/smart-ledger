@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, Landmark, TrendingUp, AlertTriangle, Clock, Check, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, TrendingUp, AlertTriangle, Clock, Check, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { PayVariableDialog } from "@/components/PayVariableDialog";
@@ -199,9 +199,8 @@ export default function BillsPage() {
     updateTransaction.mutate({ id: txId, valor, status: "pago" as any, data_pagamento: dataPagamento } as any);
   };
 
-  const handlePayWithReceipt = (txId: string, file?: File) => {
+  const handlePayWithReceipt = (txId: string, _file?: File) => {
     payTransaction.mutate(txId);
-    // File upload is handled inside the dialog component
   };
 
   const renderRecList = (items: any[], emptyMsg: string) => {
