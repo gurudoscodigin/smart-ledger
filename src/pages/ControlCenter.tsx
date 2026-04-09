@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff } from "lucide-react";
+import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,10 @@ export default function ControlCenter() {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<{ user_id: string; display_name: string | null; role: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editRole, setEditRole] = useState("assistente");
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -27,13 +32,9 @@ export default function ControlCenter() {
   const { data: users } = useQuery({
     queryKey: ["control-users"],
     queryFn: async () => {
-      const { data: profiles, error } = await supabase
-        .from("profiles")
-        .select("user_id, display_name, telegram_id");
+      const { data: profiles, error } = await supabase.from("profiles").select("user_id, display_name, telegram_id");
       if (error) throw error;
-      const { data: roles } = await supabase
-        .from("user_roles")
-        .select("user_id, role");
+      const { data: roles } = await supabase.from("user_roles").select("user_id, role");
       return (profiles || []).map(p => ({
         ...p,
         role: roles?.find(r => r.user_id === p.user_id)?.role || "assistente",
@@ -45,11 +46,7 @@ export default function ControlCenter() {
   const { data: auditLogs } = useQuery({
     queryKey: ["audit-logs"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20);
+      const { data, error } = await supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(20);
       if (error) throw error;
       return data || [];
     },
@@ -61,20 +58,13 @@ export default function ControlCenter() {
     setCreating(true);
     try {
       const { error } = await supabase.auth.signUp({
-        email: newEmail,
-        password: newPassword,
-        options: {
-          data: { display_name: newName, requested_role: newRole },
-          emailRedirectTo: window.location.origin,
-        },
+        email: newEmail, password: newPassword,
+        options: { data: { display_name: newName, requested_role: newRole }, emailRedirectTo: window.location.origin },
       });
       if (error) throw error;
-      toast.success("Usuário criado com sucesso! E-mail de confirmação enviado.");
+      toast.success("Usuário criado! E-mail de confirmação enviado.");
       setCreateOpen(false);
-      setNewName("");
-      setNewEmail("");
-      setNewPassword("");
-      setNewRole("assistente");
+      setNewName(""); setNewEmail(""); setNewPassword(""); setNewRole("assistente");
       queryClient.invalidateQueries({ queryKey: ["control-users"] });
     } catch (err: any) {
       toast.error(err.message || "Erro ao criar usuário");
@@ -85,22 +75,51 @@ export default function ControlCenter() {
 
   const updateRole = useMutation({
     mutationFn: async ({ userId, newRole }: { userId: string; newRole: string }) => {
-      const { error } = await supabase
-        .from("user_roles")
-        .update({ role: newRole as any })
-        .eq("user_id", userId);
+      const { error } = await supabase.from("user_roles").update({ role: newRole as any }).eq("user_id", userId);
       if (error) throw error;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["control-users"] }); toast.success("Cargo atualizado"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const updateProfile = useMutation({
+    mutationFn: async ({ userId, displayName, newRole }: { userId: string; displayName: string; newRole: string }) => {
+      const { error: pErr } = await supabase.from("profiles").update({ display_name: displayName }).eq("user_id", userId);
+      if (pErr) throw pErr;
+      const { error: rErr } = await supabase.from("user_roles").update({ role: newRole as any }).eq("user_id", userId);
+      if (rErr) throw rErr;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["control-users"] });
-      toast.success("Papel atualizado");
+      toast.success("Usuário atualizado");
+      setEditOpen(false);
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const roleBadgeClass = (r: string) =>
-    r === "admin" ? "bg-primary/15 text-primary" :
-    "bg-muted text-muted-foreground";
+  const deleteUser = useMutation({
+    mutationFn: async (userId: string) => {
+      // Soft: remove role + profile display, keep transaction data
+      const { error: rErr } = await supabase.from("user_roles").delete().eq("user_id", userId);
+      if (rErr) throw rErr;
+      const { error: pErr } = await supabase.from("profiles").update({ display_name: "[Removido]" }).eq("user_id", userId);
+      if (pErr) throw pErr;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["control-users"] });
+      toast.success("Usuário removido (dados históricos preservados)");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const openEdit = (u: { user_id: string; display_name: string | null; role: string }) => {
+    setEditingUser(u);
+    setEditName(u.display_name || "");
+    setEditRole(u.role);
+    setEditOpen(true);
+  };
+
+  const roleBadgeClass = (r: string) => r === "admin" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground";
 
   const permissions = [
     { action: "Ver saldo total", admin: true, assistente: false },
@@ -145,21 +164,15 @@ export default function ControlCenter() {
 
         {/* Permission Matrix */}
         <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Matriz de Permissões</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-base font-medium">Matriz de Permissões</CardTitle></CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-2 pr-4 text-muted-foreground font-medium">Ação</th>
-                    <th className="text-center py-2 px-3 font-medium">
-                      <Badge className={`text-xs ${roleBadgeClass("admin")}`}>Admin</Badge>
-                    </th>
-                    <th className="text-center py-2 px-3 font-medium">
-                      <Badge className={`text-xs ${roleBadgeClass("assistente")}`}>Assistente</Badge>
-                    </th>
+                    <th className="text-center py-2 px-3 font-medium"><Badge className={`text-xs ${roleBadgeClass("admin")}`}>Admin</Badge></th>
+                    <th className="text-center py-2 px-3 font-medium"><Badge className={`text-xs ${roleBadgeClass("assistente")}`}>Assistente</Badge></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -182,34 +195,30 @@ export default function ControlCenter() {
             <CardTitle className="text-base font-medium">Gestão de Usuários</CardTitle>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                <Button size="sm" className="gap-2">
-                  <UserPlus className="w-4 h-4" /> Novo Usuário
-                </Button>
+                <Button size="sm" className="gap-2"><UserPlus className="w-4 h-4" /> Novo Usuário</Button>
               </DialogTrigger>
               <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Criar Novo Usuário</DialogTitle>
-                </DialogHeader>
+                <DialogHeader><DialogTitle>Criar Novo Usuário</DialogTitle></DialogHeader>
                 <form onSubmit={handleCreateUser} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label>Nome Completo</Label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input placeholder="Nome completo" value={newName} onChange={(e) => setNewName(e.target.value)} className="pl-10" required />
+                      <Input placeholder="Nome completo" value={newName} onChange={e => setNewName(e.target.value)} className="pl-10" required />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>E-mail</Label>
                     <div className="relative">
                       <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input type="email" placeholder="email@exemplo.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="pl-10" required />
+                      <Input type="email" placeholder="email@exemplo.com" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="pl-10" required />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Senha</Label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input type={showPassword ? "text" : "password"} placeholder="Mínimo 8 caracteres" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="pl-10 pr-10" minLength={8} required />
+                      <Input type={showPassword ? "text" : "password"} placeholder="Mínimo 8 caracteres" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="pl-10 pr-10" minLength={8} required />
                       <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
@@ -218,30 +227,24 @@ export default function ControlCenter() {
                   <div className="space-y-2">
                     <Label>Função</Label>
                     <Select value={newRole} onValueChange={setNewRole}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="assistente">Assistente</SelectItem>
                       </SelectContent>
                     </Select>
                     {newRole === "admin" && (
-                      <p className="text-xs text-amber-500 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" /> Esse usuário terá acesso total ao sistema.
-                      </p>
+                      <p className="text-xs text-amber-500 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Acesso total ao sistema.</p>
                     )}
                   </div>
-                  <Button type="submit" className="w-full" disabled={creating}>
-                    {creating ? "Criando..." : "Criar Usuário"}
-                  </Button>
+                  <Button type="submit" className="w-full" disabled={creating}>{creating ? "Criando..." : "Criar Usuário"}</Button>
                 </form>
               </DialogContent>
             </Dialog>
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {(users || []).map((u) => (
+              {(users || []).map(u => (
                 <div key={u.user_id} className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center">
@@ -250,24 +253,39 @@ export default function ControlCenter() {
                     <div>
                       <p className="text-sm font-medium">{u.display_name || "Sem nome"}</p>
                       <p className="text-xs text-muted-foreground">
-                        {u.role === "admin" ? "🤖 Bot Financeiro: Ativo" : `Função: ${u.role}`}
+                        {u.user_id === user?.id ? "Você" : `Função: ${u.role}`}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant="secondary" className={`text-xs font-medium capitalize ${roleBadgeClass(u.role)}`}>
-                      {u.role}
-                    </Badge>
-                    {u.role !== "admin" && u.user_id !== user?.id && (
-                      <Select defaultValue={u.role} onValueChange={(v) => updateRole.mutate({ userId: u.user_id, newRole: v })}>
-                        <SelectTrigger className="w-32 h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="admin">Admin</SelectItem>
-                          <SelectItem value="assistente">Assistente</SelectItem>
-                        </SelectContent>
-                      </Select>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className={`text-xs font-medium capitalize ${roleBadgeClass(u.role)}`}>{u.role}</Badge>
+                    {u.user_id !== user?.id && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remover {u.display_name}?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                O acesso será revogado, mas todos os dados históricos (transações, logs) serão preservados.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => deleteUser.mutate(u.user_id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Remover
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </>
                     )}
                   </div>
                 </div>
@@ -276,17 +294,50 @@ export default function ControlCenter() {
           </CardContent>
         </Card>
 
+        {/* Edit User Dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Editar Usuário</DialogTitle></DialogHeader>
+            <div className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label>Nome</Label>
+                <Input value={editName} onChange={e => setEditName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Cargo</Label>
+                <Select value={editRole} onValueChange={setEditRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="assistente">Assistente</SelectItem>
+                  </SelectContent>
+                </Select>
+                {editRole === "admin" && (
+                  <p className="text-xs text-amber-500 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Acesso total ao sistema.</p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
+              <Button
+                onClick={() => editingUser && updateProfile.mutate({ userId: editingUser.user_id, displayName: editName, newRole: editRole })}
+                disabled={updateProfile.isPending}
+              >
+                {updateProfile.isPending ? "Salvando..." : "Salvar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Audit Logs */}
         <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Logs de Auditoria</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-base font-medium">Logs de Auditoria</CardTitle></CardHeader>
           <CardContent>
             {!auditLogs?.length ? (
               <p className="text-sm text-muted-foreground text-center py-8">Nenhum log registrado ainda</p>
             ) : (
               <div className="space-y-1">
-                {auditLogs.map((log) => (
+                {auditLogs.map(log => (
                   <div key={log.id} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
                     <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
                       <Clock className="w-3.5 h-3.5 text-muted-foreground" />
