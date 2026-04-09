@@ -18,7 +18,7 @@ import {
 const items = [
   { title: "Command Center", url: "/", icon: LayoutDashboard },
   { title: "Contas", url: "/bills", icon: Receipt },
-  { title: "Card Vault", url: "/cards", icon: CreditCard },
+  { title: "Cartões", url: "/cards", icon: CreditCard },
   { title: "Relatórios", url: "/reports", icon: BarChart3 },
   { title: "Categorias", url: "/categorias", icon: FolderTree },
   { title: "Control Center", url: "/settings", icon: Settings },
