@@ -79,7 +79,7 @@ export default function BillsPage() {
   const twoDaysMs = 2 * 86400000;
   const upcomingDue = allTxs.filter(t => {
     if (t.status !== "pendente") return false;
-    const dueDate = new Date(t.data_vencimento);
+    const dueDate = new Date(t.data_vencimento + "T12:00:00");
     const diff = dueDate.getTime() - now.getTime();
     return diff > 0 && diff <= twoDaysMs;
   });
@@ -185,7 +185,7 @@ export default function BillsPage() {
                     </Badge>
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                    {tx.data_vencimento && <span>{new Date(tx.data_vencimento).toLocaleDateString("pt-BR")}</span>}
+                    {tx.data_vencimento && <span>{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>}
                     {tx.origem && <span>• {tx.origem}</span>}
                     {tx.bancos && <span className="flex items-center gap-0.5"><Landmark className="w-3 h-3" /> {tx.bancos.nome}</span>}
                     {tx.cartoes && <span className="flex items-center gap-0.5"><CreditCard className="w-3 h-3" /> {tx.cartoes.apelido}</span>}
