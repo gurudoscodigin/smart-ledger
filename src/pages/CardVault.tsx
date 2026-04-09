@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark, ChevronLeft, ChevronRight, Pencil, Check, X, DollarSign } from "lucide-react";
+import { CreditCard, Wifi, Zap, Plus, Trash2, Building2, ChevronDown, ChevronUp, AlertCircle, Landmark, ChevronLeft, ChevronRight, Pencil, Check, X, DollarSign, PlusCircle } from "lucide-react";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
 import { useTransacoes } from "@/hooks/useTransacoes";
@@ -11,6 +11,7 @@ import { CreateCardDialog } from "@/components/CreateCardDialog";
 import { CreateBankDialog } from "@/components/CreateBankDialog";
 import { EditCardDialog } from "@/components/EditCardDialog";
 import { AdjustBalanceDialog } from "@/components/AdjustBalanceDialog";
+import { AddBalanceDialog } from "@/components/AddBalanceDialog";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -35,6 +36,8 @@ const metodoBadge = (origem: string | null, tipoFuncao?: string) => {
   return null;
 };
 
+const TX_PAGE_SIZE = 10;
+
 export default function CardVault() {
   const { data: cartoes, isLoading, softDelete } = useCartoes();
   const { data: bancos } = useBancos();
@@ -47,6 +50,9 @@ export default function CardVault() {
   const [editForm, setEditForm] = useState({ descricao: "", valor: "" });
   const [editCard, setEditCard] = useState<any>(null);
   const [adjustBank, setAdjustBank] = useState<any>(null);
+  const [addBalanceBank, setAddBalanceBank] = useState<any>(null);
+  // Pagination: track visible count per card/bank
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
 
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -65,6 +71,10 @@ export default function CardVault() {
       next.has(bankId) ? next.delete(bankId) : next.add(bankId);
       return next;
     });
+  };
+
+  const showMore = (key: string) => {
+    setVisibleCounts(prev => ({ ...prev, [key]: (prev[key] || TX_PAGE_SIZE) + TX_PAGE_SIZE }));
   };
 
   const bankGroups = new Map<string, { bank: any; cards: any[] }>();
@@ -145,6 +155,24 @@ export default function CardVault() {
     </div>
   );
 
+  const renderPaginatedTxs = (txs: any[], key: string, cardTipoFuncao?: string) => {
+    const visible = visibleCounts[key] || TX_PAGE_SIZE;
+    const visibleTxs = txs.slice(0, visible);
+    const hasMore = txs.length > visible;
+
+    return (
+      <div className="border-t border-border/30 pt-3">
+        <p className="text-xs font-medium text-muted-foreground mb-2">Transações ({txs.length})</p>
+        <div className="space-y-0">{visibleTxs.map(tx => renderTxRow(tx, cardTipoFuncao))}</div>
+        {hasMore && (
+          <Button variant="ghost" size="sm" className="w-full mt-2 text-xs text-muted-foreground" onClick={() => showMore(key)}>
+            Ver mais ({txs.length - visible} restantes)
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   const renderCard = (card: any) => {
     const used = Number(card.limite_total) - Number(card.limite_disponivel);
     const usedPct = card.limite_total > 0 ? (used / Number(card.limite_total)) * 100 : 0;
@@ -209,13 +237,7 @@ export default function CardVault() {
               </div>
             </div>
 
-            {/* Transactions for this card */}
-            {txs.length > 0 && (
-              <div className="border-t border-border/30 pt-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">Transações ({txs.length})</p>
-                <div className="space-y-0">{txs.map(tx => renderTxRow(tx, card.tipo_funcao))}</div>
-              </div>
-            )}
+            {txs.length > 0 && renderPaginatedTxs(txs, `card-${card.id}`, card.tipo_funcao)}
           </CardContent>
         </Card>
       </div>
@@ -260,7 +282,6 @@ export default function CardVault() {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Banks with cards */}
             {(bancos || []).map(bank => {
               const cards = bankGroups.get(bank.id)?.cards || [];
               const faturaTotal = getBankFatura(cards);
@@ -287,10 +308,16 @@ export default function CardVault() {
                               <p className="text-sm font-semibold">R$ {faturaTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
                             </div>
                             {role === "admin" && (
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary"
-                                onClick={(e) => { e.stopPropagation(); setAdjustBank(bank); }}>
-                                <DollarSign className="w-4 h-4" />
-                              </Button>
+                              <>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-status-paid"
+                                  onClick={(e) => { e.stopPropagation(); setAddBalanceBank(bank); }} title="Adicionar saldo">
+                                  <PlusCircle className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                  onClick={(e) => { e.stopPropagation(); setAdjustBank(bank); }} title="Ajustar saldo">
+                                  <DollarSign className="w-4 h-4" />
+                                </Button>
+                              </>
                             )}
                             {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                           </div>
@@ -299,12 +326,16 @@ export default function CardVault() {
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <CardContent className="pt-0 space-y-4">
-                        {/* Direct bank transactions (PIX, boleto, etc.) */}
                         {directTxs.length > 0 && (
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-2">Movimentações diretas ({directTxs.length})</p>
                             <div className="space-y-0 bg-accent/20 rounded-lg p-3">
-                              {directTxs.map(tx => renderTxRow(tx))}
+                              {directTxs.slice(0, visibleCounts[`bank-${bank.id}`] || TX_PAGE_SIZE).map(tx => renderTxRow(tx))}
+                              {directTxs.length > (visibleCounts[`bank-${bank.id}`] || TX_PAGE_SIZE) && (
+                                <Button variant="ghost" size="sm" className="w-full mt-2 text-xs text-muted-foreground" onClick={() => showMore(`bank-${bank.id}`)}>
+                                  Ver mais ({directTxs.length - (visibleCounts[`bank-${bank.id}`] || TX_PAGE_SIZE)} restantes)
+                                </Button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -320,7 +351,6 @@ export default function CardVault() {
               );
             })}
 
-            {/* Unlinked cards */}
             {unlinkedCards.length > 0 && (
               <Collapsible open={expandedBanks.has("__unlinked")} onOpenChange={() => toggleBank("__unlinked")}>
                 <Card className="glass-card">
@@ -351,6 +381,7 @@ export default function CardVault() {
       <CreateBankDialog open={createBankOpen} onOpenChange={setCreateBankOpen} />
       <EditCardDialog open={!!editCard} onOpenChange={(o) => { if (!o) setEditCard(null); }} card={editCard} />
       <AdjustBalanceDialog open={!!adjustBank} onOpenChange={(o) => { if (!o) setAdjustBank(null); }} banco={adjustBank} />
+      <AddBalanceDialog open={!!addBalanceBank} onOpenChange={(o) => { if (!o) setAddBalanceBank(null); }} banco={addBalanceBank} />
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
