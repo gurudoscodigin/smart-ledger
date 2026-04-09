@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff, Pencil, Trash2, Settings } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -14,11 +16,23 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+const PERMISSIONS_LIST = [
+  { key: "view_reports", label: "Visualizar relatórios financeiros" },
+  { key: "create_transactions", label: "Cadastrar novas contas" },
+  { key: "edit_transactions", label: "Editar contas existentes" },
+  { key: "delete_transactions", label: "Excluir contas" },
+  { key: "manage_categories", label: "Gerenciar categorias" },
+  { key: "access_settings", label: "Acessar configurações do sistema" },
+  { key: "approve_requests", label: "Aprovar/reprovar solicitações" },
+  { key: "manual_adjustments", label: "Fazer ajustes manuais" },
+];
+
 export default function ControlCenter() {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [permissionsUserId, setPermissionsUserId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<{ user_id: string; display_name: string | null; role: string } | null>(null);
   const [editName, setEditName] = useState("");
   const [editRole, setEditRole] = useState("assistente");
@@ -28,6 +42,16 @@ export default function ControlCenter() {
   const [newRole, setNewRole] = useState<string>("assistente");
   const [showPassword, setShowPassword] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Local permissions state per user (stored in localStorage until we add a DB table)
+  const [userPermissions, setUserPermissions] = useState<Record<string, Record<string, boolean>>>(() => {
+    try { return JSON.parse(localStorage.getItem("user_permissions") || "{}"); } catch { return {}; }
+  });
+
+  const savePermissions = (userId: string, perms: Record<string, boolean>) => {
+    const updated = { ...userPermissions, [userId]: perms };
+    setUserPermissions(updated);
+    localStorage.setItem("user_permissions", JSON.stringify(updated));
+  };
 
   const { data: users } = useQuery({
     queryKey: ["control-users"],
@@ -73,15 +97,6 @@ export default function ControlCenter() {
     }
   };
 
-  const updateRole = useMutation({
-    mutationFn: async ({ userId, newRole }: { userId: string; newRole: string }) => {
-      const { error } = await supabase.from("user_roles").update({ role: newRole as any }).eq("user_id", userId);
-      if (error) throw error;
-    },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["control-users"] }); toast.success("Cargo atualizado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
   const updateProfile = useMutation({
     mutationFn: async ({ userId, displayName, newRole }: { userId: string; displayName: string; newRole: string }) => {
       const { error: pErr } = await supabase.from("profiles").update({ display_name: displayName }).eq("user_id", userId);
@@ -99,7 +114,6 @@ export default function ControlCenter() {
 
   const deleteUser = useMutation({
     mutationFn: async (userId: string) => {
-      // Soft: remove role + profile display, keep transaction data
       const { error: rErr } = await supabase.from("user_roles").delete().eq("user_id", userId);
       if (rErr) throw rErr;
       const { error: pErr } = await supabase.from("profiles").update({ display_name: "[Removido]" }).eq("user_id", userId);
@@ -148,6 +162,9 @@ export default function ControlCenter() {
       </DashboardLayout>
     );
   }
+
+  const permUser = users?.find(u => u.user_id === permissionsUserId);
+  const currentPerms = permissionsUserId ? (userPermissions[permissionsUserId] || {}) : {};
 
   return (
     <DashboardLayout>
@@ -261,8 +278,11 @@ export default function ControlCenter() {
                     <Badge variant="secondary" className={`text-xs font-medium capitalize ${roleBadgeClass(u.role)}`}>{u.role}</Badge>
                     {u.user_id !== user?.id && (
                       <>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar">
                           <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPermissionsUserId(u.user_id)} title="Permissões">
+                          <Settings className="w-3.5 h-3.5" />
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
@@ -325,6 +345,33 @@ export default function ControlCenter() {
               >
                 {updateProfile.isPending ? "Salvando..." : "Salvar"}
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Permissions Dialog */}
+        <Dialog open={!!permissionsUserId} onOpenChange={(o) => { if (!o) setPermissionsUserId(null); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Permissões — {permUser?.display_name || "Usuário"}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              {PERMISSIONS_LIST.map(perm => (
+                <div key={perm.key} className="flex items-center justify-between">
+                  <Label className="text-sm">{perm.label}</Label>
+                  <Switch
+                    checked={currentPerms[perm.key] ?? false}
+                    onCheckedChange={(checked) => {
+                      if (permissionsUserId) {
+                        savePermissions(permissionsUserId, { ...currentPerms, [perm.key]: checked });
+                      }
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button onClick={() => { setPermissionsUserId(null); toast.success("Permissões salvas"); }}>Fechar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

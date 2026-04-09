@@ -10,6 +10,7 @@ import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Ima
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { PayVariableDialog } from "@/components/PayVariableDialog";
+import { PayWithReceiptDialog } from "@/components/PayWithReceiptDialog";
 import { useRecorrencias } from "@/hooks/useRecorrencias";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useComprovantes } from "@/hooks/useComprovantes";
@@ -19,6 +20,7 @@ import { useBancos } from "@/hooks/useBancos";
 import { useCartoes } from "@/hooks/useCartoes";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 
 function AttachSection({ transacaoId }: { transacaoId: string }) {
   const { data: comprovantes, upload } = useComprovantes(transacaoId);
@@ -64,6 +66,52 @@ function AttachSection({ transacaoId }: { transacaoId: string }) {
   );
 }
 
+// Check if a transaction has receipts
+function useHasComprovante(transacaoIds: string[]) {
+  return useQuery({
+    queryKey: ["comprovantes-check", transacaoIds.sort().join(",")],
+    queryFn: async () => {
+      if (!transacaoIds.length) return new Set<string>();
+      const { data } = await supabase
+        .from("comprovantes")
+        .select("transacao_id")
+        .in("transacao_id", transacaoIds);
+      return new Set((data || []).map(c => c.transacao_id));
+    },
+    enabled: transacaoIds.length > 0,
+  });
+}
+
+function formatTxTags(tx: any) {
+  const parts: string[] = [];
+  
+  // Data de pagamento ou vencimento
+  if (tx.data_pagamento) {
+    parts.push(new Date(tx.data_pagamento + "T12:00:00").toLocaleDateString("pt-BR"));
+  } else if (tx.data_vencimento) {
+    parts.push(new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR"));
+  } else {
+    parts.push("—");
+  }
+
+  // Cartão ou Banco
+  if (tx.cartoes) {
+    parts.push(`Cartão final ${tx.cartoes.final_cartao}`);
+  } else if (tx.bancos) {
+    parts.push(tx.bancos.nome);
+  } else {
+    parts.push("—");
+  }
+
+  // Categoria
+  parts.push(tx.categorias?.nome || "—");
+
+  // Subcategoria
+  parts.push(tx.subcategoria || "—");
+
+  return parts.join(" — ");
+}
+
 export default function BillsPage() {
   const [recOpen, setRecOpen] = useState(false);
   const [avulsaOpen, setAvulsaOpen] = useState(false);
@@ -89,8 +137,9 @@ export default function BillsPage() {
   const [filterBanco, setFilterBanco] = useState<string>("__all");
   const [filterCartao, setFilterCartao] = useState<string>("__all");
 
-  // Variable payment modal
+  // Payment modals
   const [payVarTx, setPayVarTx] = useState<any>(null);
+  const [payReceiptTx, setPayReceiptTx] = useState<any>(null);
 
   const filteredSubcategorias = useMemo(() => {
     if (!subcategorias || filterCategoria === "__all") return [];
@@ -122,6 +171,13 @@ export default function BillsPage() {
   const recFixas = (recorrencias || []).filter((r: any) => !r.eh_variavel);
   const recVariaveis = (recorrencias || []).filter((r: any) => r.eh_variavel);
 
+  // Check comprovantes for all displayed transactions
+  const allTxIds = useMemo(() => {
+    const ids = [...allTxs, ...overdue].filter(t => t.status === "pago").map(t => t.id);
+    return ids;
+  }, [allTxs, overdue]);
+  const { data: comprovantesSet } = useHasComprovante(allTxIds);
+
   const twoDaysMs = 2 * 86400000;
   const upcomingDue = allTxs.filter(t => {
     if (t.status !== "pendente") return false;
@@ -134,12 +190,18 @@ export default function BillsPage() {
     if (tx.categoria_tipo === "variavel") {
       setPayVarTx(tx);
     } else {
-      payTransaction.mutate(tx.id);
+      // Open receipt dialog for all non-variable payments
+      setPayReceiptTx(tx);
     }
   };
 
   const handlePayVariable = (txId: string, valor: number, dataPagamento: string) => {
     updateTransaction.mutate({ id: txId, valor, status: "pago" as any, data_pagamento: dataPagamento } as any);
+  };
+
+  const handlePayWithReceipt = (txId: string, file?: File) => {
+    payTransaction.mutate(txId);
+    // File upload is handled inside the dialog component
   };
 
   const renderRecList = (items: any[], emptyMsg: string) => {
@@ -210,63 +272,76 @@ export default function BillsPage() {
     }
     return (
       <div className="grid gap-3">
-        {items.map((tx: any) => (
-          <Card key={tx.id} className="glass-card">
-            <CardContent className="py-4 px-5">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
+        {items.map((tx: any) => {
+          const isPaidNoReceipt = tx.status === "pago" && comprovantesSet && !comprovantesSet.has(tx.id);
+          return (
+            <Card key={tx.id} className="glass-card">
+              <CardContent className="py-4 px-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">{tx.descricao}</p>
+                      {tx.categoria_tipo === "divida" && tx.parcela_atual && tx.parcela_total ? (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-primary/30 text-primary">
+                          <CreditCard className="w-3 h-3" /> {tx.parcela_atual}/{tx.parcela_total}
+                        </Badge>
+                      ) : tx.categoria_tipo === "variavel" ? (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/40 text-violet-500">
+                          <TrendingUp className="w-3 h-3" /> Variável
+                        </Badge>
+                      ) : tx.categoria_tipo === "fixa" ? (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-sky-400/40 text-sky-500">
+                          <CalendarClock className="w-3 h-3" /> Fixa
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-accent-foreground/30 text-accent-foreground">
+                          <Zap className="w-3 h-3" /> Avulsa
+                        </Badge>
+                      )}
+                      {/* Status badge with receipt warning */}
+                      {isPaidNoReceipt ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="secondary" className="text-[10px] bg-amber-500/10 text-amber-600 gap-1">
+                              <AlertTriangle className="w-3 h-3" /> Pago s/ comprovante
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>Pagamento sem comprovante anexado</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Badge variant="secondary" className={`text-[10px] ${
+                          tx.status === "pago" ? "bg-status-paid/10 text-status-paid" :
+                          tx.status === "atrasado" ? "bg-status-late/10 text-status-late" :
+                          "bg-status-pending/10 text-status-pending"
+                        }`}>
+                          {tx.status === "pago" ? "Pago" : tx.status === "atrasado" ? "Atrasado" : "Pendente"}
+                        </Badge>
+                      )}
+                    </div>
+                    {/* Standardized tags: Data — Cartão/Banco — Categoria — Subcategoria */}
+                    <p className="text-xs text-muted-foreground mt-1 truncate">
+                      {formatTxTags(tx)}
+                    </p>
+                  </div>
                   <div className="flex items-center gap-2">
-                    <p className="font-medium text-sm truncate">{tx.descricao}</p>
-                    {tx.categoria_tipo === "divida" && tx.parcela_atual && tx.parcela_total ? (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-primary/30 text-primary">
-                        <CreditCard className="w-3 h-3" /> {tx.parcela_atual}/{tx.parcela_total}
-                      </Badge>
-                    ) : tx.categoria_tipo === "variavel" ? (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/40 text-violet-500">
-                        <TrendingUp className="w-3 h-3" /> Variável
-                      </Badge>
-                    ) : tx.categoria_tipo === "fixa" ? (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-sky-400/40 text-sky-500">
-                        <CalendarClock className="w-3 h-3" /> Fixa
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-accent-foreground/30 text-accent-foreground">
-                        <Zap className="w-3 h-3" /> Avulsa
-                      </Badge>
+                    <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
+                    {tx.status !== "pago" && (
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                        onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>
+                        <Check className="w-3 h-3" /> Pagar
+                      </Button>
                     )}
-                    <Badge variant="secondary" className={`text-[10px] ${
-                      tx.status === "pago" ? "bg-status-paid/10 text-status-paid" :
-                      tx.status === "atrasado" ? "bg-status-late/10 text-status-late" :
-                      "bg-status-pending/10 text-status-pending"
-                    }`}>
-                      {tx.status === "pago" ? "Pago" : tx.status === "atrasado" ? "Atrasado" : "Pendente"}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                    {tx.data_vencimento && <span>{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>}
-                    {tx.origem && <span>• {tx.origem}</span>}
-                    {tx.bancos && <span className="flex items-center gap-0.5"><Landmark className="w-3 h-3" /> {tx.bancos.nome}</span>}
-                    {tx.cartoes && <span className="flex items-center gap-0.5"><CreditCard className="w-3 h-3" /> {tx.cartoes.apelido}</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
-                  {tx.status !== "pago" && (
-                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                      onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>
-                      <Check className="w-3 h-3" /> Pagar
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => softDeleteTransaction.mutate(tx.id)} disabled={softDeleteTransaction.isPending}>
+                      <Trash2 className="w-3.5 h-3.5" />
                     </Button>
-                  )}
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                    onClick={() => softDeleteTransaction.mutate(tx.id)} disabled={softDeleteTransaction.isPending}>
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                  <AttachSection transacaoId={tx.id} />
+                    <AttachSection transacaoId={tx.id} />
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     );
   };
@@ -380,12 +455,25 @@ export default function BillsPage() {
           </div>
         )}
 
-        <Tabs defaultValue="fixas">
+        <Tabs defaultValue="todas">
           <TabsList>
+            <TabsTrigger value="todas" className="gap-1.5">📋 Todas</TabsTrigger>
             <TabsTrigger value="fixas" className="gap-1.5"><CalendarClock className="w-4 h-4" /> Fixas</TabsTrigger>
             <TabsTrigger value="variaveis" className="gap-1.5"><TrendingUp className="w-4 h-4" /> Variáveis</TabsTrigger>
             <TabsTrigger value="avulsas" className="gap-1.5"><Zap className="w-4 h-4" /> Avulsas</TabsTrigger>
           </TabsList>
+
+          {/* All transactions tab */}
+          <TabsContent value="todas" className="space-y-4 pt-4">
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Fixa/Variável</Button>
+              <Button onClick={() => setAvulsaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Avulsa</Button>
+            </div>
+            {renderTxList(allTxs,
+              <FileText className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
+              "Nenhuma conta neste mês"
+            )}
+          </TabsContent>
 
           <TabsContent value="fixas" className="space-y-4 pt-4">
             <div className="flex justify-end">
@@ -444,6 +532,13 @@ export default function BillsPage() {
         transaction={payVarTx}
         onConfirm={handlePayVariable}
         isPending={updateTransaction.isPending}
+      />
+      <PayWithReceiptDialog
+        open={!!payReceiptTx}
+        onOpenChange={(o) => { if (!o) setPayReceiptTx(null); }}
+        transaction={payReceiptTx}
+        onConfirm={handlePayWithReceipt}
+        isPending={payTransaction.isPending}
       />
     </DashboardLayout>
   );
