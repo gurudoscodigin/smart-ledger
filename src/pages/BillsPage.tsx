@@ -1,16 +1,22 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, Landmark, TrendingUp, AlertTriangle, Clock, Check } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, Landmark, TrendingUp, AlertTriangle, Clock, Check, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
+import { PayVariableDialog } from "@/components/PayVariableDialog";
 import { useRecorrencias } from "@/hooks/useRecorrencias";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useComprovantes } from "@/hooks/useComprovantes";
+import { useCategorias } from "@/hooks/useCategorias";
+import { useSubcategorias } from "@/hooks/useSubcategorias";
+import { useBancos } from "@/hooks/useBancos";
+import { useCartoes } from "@/hooks/useCartoes";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -61,21 +67,61 @@ function AttachSection({ transacaoId }: { transacaoId: string }) {
 export default function BillsPage() {
   const [recOpen, setRecOpen] = useState(false);
   const [avulsaOpen, setAvulsaOpen] = useState(false);
-  const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
-  const { data: txData, isLoading: txLoading, payTransaction, softDeleteTransaction } = useTransacoes();
 
-  const allTxs = txData?.currentMonth || [];
-  const overdue = txData?.overdue || [];
+  // Month navigation
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
+  const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
+
+  const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
+  const { data: txData, isLoading: txLoading, payTransaction, softDeleteTransaction, updateTransaction } = useTransacoes({ month, year });
+
+  // Filters
+  const { data: categorias } = useCategorias();
+  const { data: subcategorias } = useSubcategorias();
+  const { data: bancos } = useBancos();
+  const { data: cartoes } = useCartoes();
+  const [filterCategoria, setFilterCategoria] = useState<string>("__all");
+  const [filterSubcategoria, setFilterSubcategoria] = useState<string>("__all");
+  const [filterBanco, setFilterBanco] = useState<string>("__all");
+  const [filterCartao, setFilterCartao] = useState<string>("__all");
+
+  // Variable payment modal
+  const [payVarTx, setPayVarTx] = useState<any>(null);
+
+  const filteredSubcategorias = useMemo(() => {
+    if (!subcategorias || filterCategoria === "__all") return [];
+    return subcategorias.filter((s: any) => s.categoria_id === filterCategoria);
+  }, [subcategorias, filterCategoria]);
+
+  const filteredCartoes = useMemo(() => {
+    if (!cartoes) return [];
+    if (filterBanco === "__all") return cartoes;
+    return cartoes.filter((c: any) => c.banco_id === filterBanco);
+  }, [cartoes, filterBanco]);
+
+  const applyFilters = (items: any[]) => {
+    return items.filter(t => {
+      if (filterCategoria !== "__all" && t.categoria_id !== filterCategoria) return false;
+      if (filterSubcategoria !== "__all" && t.subcategoria !== filterSubcategoria) return false;
+      if (filterBanco !== "__all" && t.banco_id !== filterBanco) return false;
+      if (filterCartao !== "__all" && t.cartao_id !== filterCartao) return false;
+      return true;
+    });
+  };
+
+  const allTxs = applyFilters(txData?.currentMonth || []);
+  const overdue = applyFilters(txData?.overdue || []);
   const avulsas = allTxs.filter(t => t.categoria_tipo === "avulsa");
   const variaveis = allTxs.filter(t => t.categoria_tipo === "variavel");
   const dividas = allTxs.filter(t => t.categoria_tipo === "divida");
 
-  // Separate recorrencias: Fixas (not variable) vs Variáveis (variable)
   const recFixas = (recorrencias || []).filter((r: any) => !r.eh_variavel);
   const recVariaveis = (recorrencias || []).filter((r: any) => r.eh_variavel);
 
-  // Alert sections
-  const now = new Date();
   const twoDaysMs = 2 * 86400000;
   const upcomingDue = allTxs.filter(t => {
     if (t.status !== "pendente") return false;
@@ -83,6 +129,18 @@ export default function BillsPage() {
     const diff = dueDate.getTime() - now.getTime();
     return diff > 0 && diff <= twoDaysMs;
   });
+
+  const handlePayClick = (tx: any) => {
+    if (tx.categoria_tipo === "variavel") {
+      setPayVarTx(tx);
+    } else {
+      payTransaction.mutate(tx.id);
+    }
+  };
+
+  const handlePayVariable = (txId: string, valor: number, dataPagamento: string) => {
+    updateTransaction.mutate({ id: txId, valor, status: "pago" as any, data_pagamento: dataPagamento } as any);
+  };
 
   const renderRecList = (items: any[], emptyMsg: string) => {
     if (recLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
@@ -195,7 +253,7 @@ export default function BillsPage() {
                   <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
                   {tx.status !== "pago" && (
                     <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                      onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                      onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>
                       <Check className="w-3 h-3" /> Pagar
                     </Button>
                   )}
@@ -221,6 +279,48 @@ export default function BillsPage() {
             <h1 className="text-2xl font-semibold tracking-tight">Cadastro de Contas</h1>
             <p className="text-muted-foreground text-sm mt-1">Gerencie contas fixas, variáveis e avulsas</p>
           </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
+            <span className="text-sm font-medium min-w-[140px] text-center">{meses[month - 1]} {year}</span>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+          </div>
+        </div>
+
+        {/* Cascading Filters */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Filter className="w-4 h-4 text-muted-foreground" />
+          <Select value={filterCategoria} onValueChange={v => { setFilterCategoria(v); setFilterSubcategoria("__all"); }}>
+            <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Categoria" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Todas categorias</SelectItem>
+              {(categorias || []).map((c: any) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {filteredSubcategorias.length > 0 && (
+            <Select value={filterSubcategoria} onValueChange={setFilterSubcategoria}>
+              <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Subcategoria" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Todas subcategorias</SelectItem>
+                {filteredSubcategorias.map((s: any) => <SelectItem key={s.id} value={s.nome}>{s.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          <Select value={filterBanco} onValueChange={v => { setFilterBanco(v); setFilterCartao("__all"); }}>
+            <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Banco" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Todos bancos</SelectItem>
+              {(bancos || []).map((b: any) => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {filteredCartoes.length > 0 && (
+            <Select value={filterCartao} onValueChange={setFilterCartao}>
+              <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Cartão" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Todos cartões</SelectItem>
+                {filteredCartoes.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.apelido} •{c.final_cartao}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         {/* Alert Banners */}
@@ -241,7 +341,7 @@ export default function BillsPage() {
                           <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>
                           <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
                           <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
-                            onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                            onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>
                             <Check className="w-3 h-3" /> Pagar
                           </Button>
                         </div>
@@ -267,7 +367,7 @@ export default function BillsPage() {
                           <span className="text-xs text-muted-foreground">{new Date(tx.data_vencimento + "T12:00:00").toLocaleDateString("pt-BR")}</span>
                           <span className="font-medium">R$ {Number(tx.valor).toFixed(2)}</span>
                           <Button size="sm" variant="outline" className="h-6 text-[10px] gap-0.5"
-                            onClick={() => payTransaction.mutate(tx.id)} disabled={payTransaction.isPending}>
+                            onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>
                             <Check className="w-3 h-3" /> Pagar
                           </Button>
                         </div>
@@ -287,7 +387,6 @@ export default function BillsPage() {
             <TabsTrigger value="avulsas" className="gap-1.5"><Zap className="w-4 h-4" /> Avulsas</TabsTrigger>
           </TabsList>
 
-          {/* CONTAS FIXAS (recorrentes não-variáveis + transações fixas do mês) */}
           <TabsContent value="fixas" className="space-y-4 pt-4">
             <div className="flex justify-end">
               <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Fixa</Button>
@@ -295,7 +394,6 @@ export default function BillsPage() {
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Modelos Recorrentes</h3>
             {renderRecList(recFixas, "Nenhuma conta fixa cadastrada")}
 
-            {/* Fixed transactions this month */}
             {allTxs.filter(t => t.categoria_tipo === "fixa").length > 0 && (
               <>
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6">Lançamentos do Mês</h3>
@@ -308,7 +406,6 @@ export default function BillsPage() {
             )}
           </TabsContent>
 
-          {/* CONTAS VARIÁVEIS (recorrentes variáveis + transações variáveis do mês) */}
           <TabsContent value="variaveis" className="space-y-4 pt-4">
             <div className="flex justify-end">
               <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Variável</Button>
@@ -327,7 +424,6 @@ export default function BillsPage() {
             )}
           </TabsContent>
 
-          {/* CONTAS AVULSAS */}
           <TabsContent value="avulsas" className="space-y-4 pt-4">
             <div className="flex justify-end">
               <Button onClick={() => setAvulsaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Avulsa</Button>
@@ -342,6 +438,13 @@ export default function BillsPage() {
 
       <CreateRecorrenciaDialog open={recOpen} onOpenChange={setRecOpen} />
       <CreateTransactionDialog open={avulsaOpen} onOpenChange={setAvulsaOpen} />
+      <PayVariableDialog
+        open={!!payVarTx}
+        onOpenChange={(o) => { if (!o) setPayVarTx(null); }}
+        transaction={payVarTx}
+        onConfirm={handlePayVariable}
+        isPending={updateTransaction.isPending}
+      />
     </DashboardLayout>
   );
 }

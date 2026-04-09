@@ -55,5 +55,27 @@ export function useBancos() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  return { ...query, create, updateSaldo };
+  const addSaldo = useMutation({
+    mutationFn: async ({ id, valor }: { id: string; valor: number }) => {
+      const { data: banco, error: fetchErr } = await supabase
+        .from("bancos")
+        .select("saldo_atual")
+        .eq("id", id)
+        .single();
+      if (fetchErr) throw fetchErr;
+      const novoSaldo = Number(banco.saldo_atual) + valor;
+      const { error } = await supabase
+        .from("bancos")
+        .update({ saldo_atual: novoSaldo })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bancos"] });
+      toast.success("Saldo adicionado com sucesso");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return { ...query, create, updateSaldo, addSaldo };
 }

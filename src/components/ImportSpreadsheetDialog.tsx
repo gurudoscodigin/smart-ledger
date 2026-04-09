@@ -7,6 +7,7 @@ import { Upload, AlertCircle, Check, FileSpreadsheet } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 const PAID_VALUES = ["pago", "paga", "paid", "sim", "yes", "1", "true", "x", "✓"];
 
@@ -18,6 +19,7 @@ const SYSTEM_FIELDS = [
   { key: "status", label: "Status" },
   { key: "categoria_tipo", label: "Tipo (fixa/avulsa/variavel/divida)" },
   { key: "origem", label: "Origem" },
+  { key: "cartao_id", label: "Cartão (ID)" },
   { key: "__skip", label: "— Ignorar coluna —" },
 ];
 
@@ -28,6 +30,7 @@ interface Props {
 
 export function ImportSpreadsheetDialog({ open, onOpenChange }: Props) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState<"upload" | "mapping" | "validation" | "done">("upload");
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<string[][]>([]);
@@ -49,7 +52,6 @@ export function ImportSpreadsheetDialog({ open, onOpenChange }: Props) {
       const { headers: h, rows: r } = parseCSV(text);
       setHeaders(h);
       setRows(r);
-      // Auto-map if names match
       const autoMap: Record<string, string> = {};
       h.forEach(col => {
         const lower = col.toLowerCase();
@@ -58,6 +60,7 @@ export function ImportSpreadsheetDialog({ open, onOpenChange }: Props) {
         else if (lower.includes("vencimento") || lower.includes("data")) autoMap[col] = "data_vencimento";
         else if (lower.includes("pagamento")) autoMap[col] = "data_pagamento";
         else if (lower.includes("status")) autoMap[col] = "status";
+        else if (lower.includes("cartao") || lower.includes("cartão")) autoMap[col] = "cartao_id";
         else autoMap[col] = "__skip";
       });
       setMapping(autoMap);
@@ -117,6 +120,30 @@ export function ImportSpreadsheetDialog({ open, onOpenChange }: Props) {
 
       const { error } = await supabase.from("transacoes").insert(transactions);
       if (error) throw error;
+
+      // Deduct card limits for imported transactions with cartao_id
+      const cardTotals = new Map<string, number>();
+      for (const tx of transactions) {
+        if (tx.cartao_id && tx.status !== "pago") {
+          cardTotals.set(tx.cartao_id, (cardTotals.get(tx.cartao_id) || 0) + Number(tx.valor));
+        }
+      }
+
+      for (const [cardId, total] of cardTotals) {
+        const { data: cartao } = await supabase
+          .from("cartoes")
+          .select("limite_disponivel")
+          .eq("id", cardId)
+          .single();
+        if (cartao) {
+          await supabase
+            .from("cartoes")
+            .update({ limite_disponivel: cartao.limite_disponivel - total })
+            .eq("id", cardId);
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["cartoes"] });
       toast.success(`${transactions.length} transações importadas!`);
       setStep("done");
     } catch (err: any) {
