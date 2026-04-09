@@ -456,6 +456,35 @@ export type Database = {
           },
         ]
       }
+      subcategorias: {
+        Row: {
+          categoria_id: string
+          created_at: string
+          id: string
+          nome: string
+        }
+        Insert: {
+          categoria_id: string
+          created_at?: string
+          id?: string
+          nome: string
+        }
+        Update: {
+          categoria_id?: string
+          created_at?: string
+          id?: string
+          nome?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subcategorias_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_bot_state: {
         Row: {
           id: number
