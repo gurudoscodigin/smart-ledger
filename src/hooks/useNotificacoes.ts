@@ -21,18 +21,30 @@ export function useNotificacoes() {
   const query = useQuery({
     queryKey: ["notificacoes"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("notificacoes")
-        .select("*")
-        .eq("user_id", user!.id)
-        .eq("lida", false)
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      return (data || []) as Notificacao[];
+      try {
+        const { data, error } = await (supabase as any)
+          .from("notificacoes")
+          .select("*")
+          .eq("user_id", user!.id)
+          .eq("lida", false)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        // If table doesn't exist, return empty array gracefully
+        if (error) {
+          if (error.code === "42P01" || error.message?.includes("relation") || error.code === "PGRST204") {
+            console.warn("Tabela notificacoes ainda não existe");
+            return [] as Notificacao[];
+          }
+          throw error;
+        }
+        return (data || []) as Notificacao[];
+      } catch {
+        return [] as Notificacao[];
+      }
     },
     enabled: !!user,
-    refetchInterval: 30000,
+    refetchInterval: 60000, // Reduced from 30s to 60s
+    retry: false,
   });
 
   const markRead = useMutation({
