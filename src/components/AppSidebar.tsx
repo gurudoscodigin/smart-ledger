@@ -30,8 +30,8 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, role } = useAuth();
 
-  const roleBadge = role === "admin" ? "bg-primary/15 text-primary" : role === "supervisor" ? "bg-role-supervisor/20 text-foreground" : "bg-muted text-muted-foreground";
-  const roleLabel = role === "admin" ? "Admin" : role === "supervisor" ? "Supervisor" : "Assistente";
+  const roleBadge = role === "admin" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground";
+  const roleLabel = role === "admin" ? "Admin" : "Assistente";
 
   return (
     <Sidebar collapsible="icon" className="border-r border-border/50">
