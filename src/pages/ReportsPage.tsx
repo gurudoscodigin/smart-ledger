@@ -2,7 +2,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BarChart3, Download, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from "lucide-react";
+import { BarChart3, Download, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { ImportSpreadsheetDialog } from "@/components/ImportSpreadsheetDialog";
@@ -80,10 +80,10 @@ export default function ReportsPage() {
   }, [allTx]);
 
   const toggleCat = (name: string) => {
-    setExpandedCats(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n; });
+    setExpandedCats(prev => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   };
   const toggleSub = (key: string) => {
-    setExpandedSubs(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+    setExpandedSubs(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   };
 
   const statusBadge = (s: string) => {
