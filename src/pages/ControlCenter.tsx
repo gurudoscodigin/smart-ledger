@@ -100,20 +100,19 @@ export default function ControlCenter() {
 
   const roleBadgeClass = (r: string) =>
     r === "admin" ? "bg-primary/15 text-primary" :
-    r === "supervisor" ? "bg-role-supervisor/20 text-foreground" :
     "bg-muted text-muted-foreground";
 
   const permissions = [
-    { action: "Ver saldo total", admin: true, supervisor: true, assistente: false },
-    { action: "Criar/editar transações", admin: true, supervisor: true, assistente: true },
-    { action: "Deletar transações", admin: true, supervisor: false, assistente: false },
-    { action: "Gerenciar cartões e bancos", admin: true, supervisor: false, assistente: false },
-    { action: "Alterar limites", admin: true, supervisor: false, assistente: false },
-    { action: "Aprovar lançamentos", admin: true, supervisor: true, assistente: false },
-    { action: "Gerenciar usuários", admin: true, supervisor: false, assistente: false },
-    { action: "Ver logs de auditoria", admin: true, supervisor: true, assistente: false },
-    { action: "Configurar APIs e Drive", admin: true, supervisor: false, assistente: false },
-    { action: "Importar planilhas", admin: true, supervisor: true, assistente: false },
+    { action: "Ver saldo total", admin: true, assistente: false },
+    { action: "Criar/editar transações", admin: true, assistente: true },
+    { action: "Deletar transações", admin: true, assistente: false },
+    { action: "Gerenciar cartões e bancos", admin: true, assistente: false },
+    { action: "Alterar limites", admin: true, assistente: false },
+    { action: "Aprovar lançamentos", admin: true, assistente: false },
+    { action: "Gerenciar usuários", admin: true, assistente: false },
+    { action: "Ver logs de auditoria", admin: true, assistente: false },
+    { action: "Configurar APIs e Drive", admin: true, assistente: false },
+    { action: "Importar planilhas", admin: true, assistente: false },
   ];
 
   if (role !== "admin") {
@@ -159,9 +158,6 @@ export default function ControlCenter() {
                       <Badge className={`text-xs ${roleBadgeClass("admin")}`}>Admin</Badge>
                     </th>
                     <th className="text-center py-2 px-3 font-medium">
-                      <Badge className={`text-xs ${roleBadgeClass("supervisor")}`}>Supervisor</Badge>
-                    </th>
-                    <th className="text-center py-2 px-3 font-medium">
                       <Badge className={`text-xs ${roleBadgeClass("assistente")}`}>Assistente</Badge>
                     </th>
                   </tr>
@@ -171,7 +167,6 @@ export default function ControlCenter() {
                     <tr key={i} className="border-b border-border/30 last:border-0">
                       <td className="py-2.5 pr-4">{p.action}</td>
                       <td className="text-center py-2.5">{p.admin ? "✅" : "❌"}</td>
-                      <td className="text-center py-2.5">{p.supervisor ? "✅" : "❌"}</td>
                       <td className="text-center py-2.5">{p.assistente ? "✅" : "❌"}</td>
                     </tr>
                   ))}
@@ -228,7 +223,6 @@ export default function ControlCenter() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="supervisor">Supervisor</SelectItem>
                         <SelectItem value="assistente">Assistente</SelectItem>
                       </SelectContent>
                     </Select>
@@ -270,7 +264,7 @@ export default function ControlCenter() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="supervisor">Supervisor</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
                           <SelectItem value="assistente">Assistente</SelectItem>
                         </SelectContent>
                       </Select>
