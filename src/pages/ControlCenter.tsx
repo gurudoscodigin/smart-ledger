@@ -316,8 +316,9 @@ export default function ControlCenter() {
 
         {/* Edit User Dialog */}
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogContent>
+          <DialogContent aria-describedby="edit-user-desc">
             <DialogHeader><DialogTitle>Editar Usuário</DialogTitle></DialogHeader>
+            <p id="edit-user-desc" className="text-sm text-muted-foreground">Altere o nome e cargo do usuário.</p>
             <div className="space-y-4 pt-2">
               <div className="space-y-2">
                 <Label>Nome</Label>
@@ -337,7 +338,7 @@ export default function ControlCenter() {
                 )}
               </div>
             </div>
-            <DialogFooter>
+            <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => setEditOpen(false)}>Cancelar</Button>
               <Button
                 onClick={() => editingUser && updateProfile.mutate({ userId: editingUser.user_id, displayName: editName, newRole: editRole })}
@@ -345,16 +346,17 @@ export default function ControlCenter() {
               >
                 {updateProfile.isPending ? "Salvando..." : "Salvar"}
               </Button>
-            </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
 
         {/* Permissions Dialog */}
         <Dialog open={!!permissionsUserId} onOpenChange={(o) => { if (!o) setPermissionsUserId(null); }}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md" aria-describedby="perm-desc">
             <DialogHeader>
               <DialogTitle>Permissões — {permUser?.display_name || "Usuário"}</DialogTitle>
             </DialogHeader>
+            <p id="perm-desc" className="text-sm text-muted-foreground">Ative ou desative permissões individuais para este usuário.</p>
             <div className="space-y-3 py-2">
               {PERMISSIONS_LIST.map(perm => (
                 <div key={perm.key} className="flex items-center justify-between">
@@ -370,9 +372,9 @@ export default function ControlCenter() {
                 </div>
               ))}
             </div>
-            <DialogFooter>
+            <div className="flex justify-end pt-2">
               <Button onClick={() => { setPermissionsUserId(null); toast.success("Permissões salvas"); }}>Fechar</Button>
-            </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
 
