@@ -93,7 +93,9 @@ export default function CardVault() {
 
   const getBankFatura = (cards: any[]) => {
     const cardIds = cards.map(c => c.id);
-    return allTxs.filter(t => t.cartao_id && cardIds.includes(t.cartao_id)).reduce((sum, t) => sum + Number(t.valor), 0);
+    return allTxs
+      .filter(t => t.cartao_id && cardIds.includes(t.cartao_id) && (t.status === "pendente" || t.status === "atrasado"))
+      .reduce((sum, t) => sum + Number(t.valor), 0);
   };
 
   const isExpiringSoon = (card: any) => {
@@ -174,8 +176,14 @@ export default function CardVault() {
   };
 
   const renderCard = (card: any) => {
-    const used = Number(card.limite_total) - Number(card.limite_disponivel);
-    const usedPct = card.limite_total > 0 ? (used / Number(card.limite_total)) * 100 : 0;
+    // Calculate used limit at runtime from pending/overdue transactions
+    const cardTxs = allTxs.filter(t => t.cartao_id === card.id);
+    const used = cardTxs
+      .filter(t => t.status === "pendente" || t.status === "atrasado")
+      .reduce((sum, t) => sum + Number(t.valor), 0);
+    const limiteTotal = Number(card.limite_total);
+    const disponivel = limiteTotal - used;
+    const usedPct = limiteTotal > 0 ? (used / limiteTotal) * 100 : 0;
     const barColor = usedPct > 80 ? "bg-status-late" : usedPct > 60 ? "bg-primary" : "bg-status-paid";
     const expiring = isExpiringSoon(card);
     const txs = getCardTxs(card.id);
@@ -225,14 +233,14 @@ export default function CardVault() {
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Limite utilizado</span>
                 <span className="font-medium">
-                  R$ {used.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} / R$ {Number(card.limite_total).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  R$ {used.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} / R$ {limiteTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="h-2 bg-accent rounded-full overflow-hidden">
                 <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(usedPct, 100)}%` }} />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Disponível: R$ {Number(card.limite_disponivel).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                <span>Disponível: R$ {disponivel.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
                 <span>Fecha dia {card.dia_fechamento} · Vence dia {card.dia_vencimento}</span>
               </div>
             </div>
