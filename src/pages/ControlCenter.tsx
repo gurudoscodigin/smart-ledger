@@ -114,10 +114,20 @@ export default function ControlCenter() {
 
   const deleteUser = useMutation({
     mutationFn: async (userId: string) => {
+      if (userId === user?.id) {
+        throw new Error("Você não pode excluir sua própria conta");
+      }
       const { error: rErr } = await supabase.from("user_roles").delete().eq("user_id", userId);
       if (rErr) throw rErr;
-      const { error: pErr } = await supabase.from("profiles").update({ display_name: "[Removido]" }).eq("user_id", userId);
+      const { data: pData, error: pErr } = await supabase
+        .from("profiles")
+        .update({ display_name: "[Removido]" })
+        .eq("user_id", userId)
+        .select("id");
       if (pErr) throw pErr;
+      if (!pData || pData.length === 0) {
+        throw new Error("Falha ao atualizar profile — verifique permissões admin");
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["control-users"] });

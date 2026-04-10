@@ -34,15 +34,43 @@ export function useRecorrencias() {
       instrucoes_coleta?: string;
       url_site_login?: string;
     }) => {
-      const payload: any = { ...rec, user_id: user!.id };
-      const { error } = await supabase
+      const payload: any = { ...rec, user_id: user!.id, ativo: true };
+      const { data: inserted, error } = await supabase
         .from("recorrencias_fixas")
-        .insert(payload);
+        .insert(payload)
+        .select()
+        .single();
       if (error) throw error;
+
+      // Gerar transação do mês corrente imediatamente
+      const now = new Date();
+      const yr = now.getFullYear();
+      const mo = now.getMonth() + 1;
+      const vencimento = `${yr}-${String(mo).padStart(2, "0")}-${String(rec.dia_vencimento_padrao).padStart(2, "0")}`;
+      const hoje = now.getDate();
+      const deveGerar = rec.eh_variavel || rec.dia_vencimento_padrao >= hoje;
+
+      if (deveGerar) {
+        const { error: txErr } = await supabase.from("transacoes").insert({
+          descricao: rec.nome,
+          valor: rec.eh_variavel ? 0 : rec.valor_estimado,
+          data_vencimento: vencimento,
+          status: "pendente",
+          categoria_tipo: rec.eh_variavel ? "variavel" : "fixa",
+          recorrencia_id: inserted.id,
+          cartao_id: rec.cartao_id || null,
+          banco_id: rec.banco_id || null,
+          categoria_id: rec.categoria_id || null,
+          origem: rec.origem || null,
+          user_id: user!.id,
+        });
+        if (txErr) console.error("Erro ao gerar transação do mês corrente:", txErr);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["recorrencias"] });
-      toast.success("Conta fixa cadastrada");
+      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+      toast.success("Conta cadastrada e disponível no mês corrente");
     },
     onError: (e: Error) => toast.error(e.message),
   });
