@@ -8,20 +8,23 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, TrendingUp, AlertTriangle, Clock, Check, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
+import { CreateDividaDialog } from "@/components/CreateDividaDialog";
 import { PayVariableDialog } from "@/components/PayVariableDialog";
 import { PayWithReceiptDialog } from "@/components/PayWithReceiptDialog";
-import { useRecorrencias } from "@/hooks/useRecorrencias";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useComprovantes } from "@/hooks/useComprovantes";
 import { useCategorias } from "@/hooks/useCategorias";
 import { useSubcategorias } from "@/hooks/useSubcategorias";
 import { useBancos } from "@/hooks/useBancos";
 import { useCartoes } from "@/hooks/useCartoes";
+import { useContratosDivida, useParcelasContrato } from "@/hooks/useContratosDivida";
+import { AmortizacaoDialog } from "@/components/AmortizacaoDialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 function AttachSection({ transacaoId }: { transacaoId: string }) {
   const { data: comprovantes, upload } = useComprovantes(transacaoId);
@@ -67,7 +70,6 @@ function AttachSection({ transacaoId }: { transacaoId: string }) {
   );
 }
 
-// Check if a transaction has receipts
 function useHasComprovante(transacaoIds: string[]) {
   return useQuery({
     queryKey: ["comprovantes-check", transacaoIds.sort().join(",")],
@@ -85,8 +87,6 @@ function useHasComprovante(transacaoIds: string[]) {
 
 function formatTxTags(tx: any) {
   const parts: string[] = [];
-  
-  // Data de pagamento ou vencimento
   if (tx.data_pagamento) {
     parts.push(new Date(tx.data_pagamento + "T12:00:00").toLocaleDateString("pt-BR"));
   } else if (tx.data_vencimento) {
@@ -94,8 +94,6 @@ function formatTxTags(tx: any) {
   } else {
     parts.push("—");
   }
-
-  // Cartão ou Banco
   if (tx.cartoes) {
     parts.push(`Cartão final ${tx.cartoes.final_cartao}`);
   } else if (tx.bancos) {
@@ -103,19 +101,55 @@ function formatTxTags(tx: any) {
   } else {
     parts.push("—");
   }
-
-  // Categoria
   parts.push(tx.categorias?.nome || "—");
-
-  // Subcategoria
   parts.push(tx.subcategoria || "—");
-
   return parts.join(" — ");
 }
 
+// Parcelas viewer dialog
+function ParcelasDialog({ contratoId, contratoNome, open, onOpenChange }: { contratoId: string | null; contratoNome: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { data: parcelas, isLoading } = useParcelasContrato(contratoId);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[80vh]">
+        <DialogHeader>
+          <DialogTitle>Parcelas — {contratoNome}</DialogTitle>
+        </DialogHeader>
+        <ScrollArea className="max-h-[60vh]">
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
+          ) : !parcelas?.length ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Nenhuma parcela encontrada</p>
+          ) : (
+            <div className="space-y-2">
+              {parcelas.map((p: any) => {
+                const [y, m, d] = p.data_vencimento.split("-");
+                return (
+                  <div key={p.id} className="flex items-center justify-between py-2 px-3 border rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">
+                        {p.status === "pago" ? "✅" : p.status === "atrasado" ? "🔴" : "⏳"}
+                      </span>
+                      <span className="text-sm font-medium">{p.parcela_atual}/{p.parcela_total}</span>
+                      <span className="text-xs text-muted-foreground">{d}/{m}/{y}</span>
+                    </div>
+                    <span className="text-sm font-medium tabular-nums">R$ {Number(p.valor).toFixed(2)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function BillsPage() {
-  const [recOpen, setRecOpen] = useState(false);
   const [avulsaOpen, setAvulsaOpen] = useState(false);
+  const [dividaOpen, setDividaOpen] = useState(false);
+  const [dialogDefaultTab, setDialogDefaultTab] = useState<"avulsa" | "fixa" | "divida" | "pix">("avulsa");
 
   // Month navigation
   const now = new Date();
@@ -125,8 +159,8 @@ export default function BillsPage() {
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
   const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
 
-  const { data: recorrencias, isLoading: recLoading, remove } = useRecorrencias();
   const { data: txData, isLoading: txLoading, payTransaction, softDeleteTransaction, updateTransaction } = useTransacoes({ month, year });
+  const { data: contratos, isLoading: contratosLoading } = useContratosDivida();
 
   // Filters
   const { data: categorias } = useCategorias();
@@ -137,10 +171,16 @@ export default function BillsPage() {
   const [filterSubcategoria, setFilterSubcategoria] = useState<string>("__all");
   const [filterBanco, setFilterBanco] = useState<string>("__all");
   const [filterCartao, setFilterCartao] = useState<string>("__all");
+  const [filterOrigem, setFilterOrigem] = useState<string>("__all");
 
   // Payment modals
   const [payVarTx, setPayVarTx] = useState<any>(null);
   const [payReceiptTx, setPayReceiptTx] = useState<any>(null);
+
+  // Debt dialogs
+  const [amortContrato, setAmortContrato] = useState<any>(null);
+  const [parcelasContratoId, setParcelasContratoId] = useState<string | null>(null);
+  const [parcelasContratoNome, setParcelasContratoNome] = useState("");
 
   const filteredSubcategorias = useMemo(() => {
     if (!subcategorias || filterCategoria === "__all") return [];
@@ -162,18 +202,15 @@ export default function BillsPage() {
       if (filterSubcategoria !== "__all" && t.subcategoria !== filterSubcategoria) return false;
       if (filterBanco !== "__all" && t.banco_id !== filterBanco) return false;
       if (filterCartao !== "__all" && t.cartao_id !== filterCartao) return false;
+      if (filterOrigem !== "__all" && t.origem !== filterOrigem) return false;
       return true;
     });
   };
 
   const allTxs = applyFilters(txData?.currentMonth || []);
   const overdue = applyFilters(txData?.overdue || []);
+  const fixasEVariaveis = allTxs.filter(t => t.categoria_tipo === "fixa" || t.categoria_tipo === "variavel");
   const avulsas = allTxs.filter(t => t.categoria_tipo === "avulsa");
-  const variaveis = allTxs.filter(t => t.categoria_tipo === "variavel");
-  const dividas = allTxs.filter(t => t.categoria_tipo === "divida");
-
-  const recFixas = (recorrencias || []).filter((r: any) => !r.eh_variavel);
-  const recVariaveis = (recorrencias || []).filter((r: any) => r.eh_variavel);
 
   // Check comprovantes for all displayed transactions
   const allTxIds = useMemo(() => {
@@ -194,7 +231,6 @@ export default function BillsPage() {
     if (tx.categoria_tipo === "variavel") {
       setPayVarTx(tx);
     } else {
-      // Open receipt dialog for all non-variable payments
       setPayReceiptTx(tx);
     }
   };
@@ -207,59 +243,22 @@ export default function BillsPage() {
     payTransaction.mutate(txId);
   };
 
-  const renderRecList = (items: any[], emptyMsg: string) => {
-    if (recLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
-    if (!items.length) {
-      return (
-        <Card className="glass-card">
-          <CardContent className="py-12 text-center">
-            <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm">{emptyMsg}</p>
-          </CardContent>
-        </Card>
-      );
-    }
-    return (
-      <div className="grid gap-3">
-        {items.map((rec: any) => (
-          <Card key={rec.id} className="glass-card">
-            <CardContent className="py-4 px-5">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-sm truncate">{rec.nome}</p>
-                    {rec.eh_variavel ? (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-violet-400/40 text-violet-500">
-                        <ToggleRight className="w-3 h-3" /> Variável
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] gap-1 border-sky-400/40 text-sky-500">
-                        <CalendarClock className="w-3 h-3" /> Fixa
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                    <span>Vence dia {rec.dia_vencimento_padrao}</span>
-                    {rec.cartoes && <span>• {rec.cartoes.apelido}</span>}
-                    {rec.bancos && <span>• {rec.bancos.nome}</span>}
-                    {rec.categorias && <span>• {rec.categorias.nome}</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium tabular-nums mr-1">
-                    {rec.eh_variavel ? "~" : ""}R$ {Number(rec.valor_estimado).toFixed(2)}
-                  </p>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => remove.mutate(rec.id)}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
+  const openDialog = (tab: "avulsa" | "fixa" | "divida" | "pix") => {
+    setDialogDefaultTab(tab);
+    setAvulsaOpen(true);
   };
+
+  const clearFilters = () => {
+    setFilterCategoria("__all");
+    setFilterSubcategoria("__all");
+    setFilterBanco("__all");
+    setFilterCartao("__all");
+    setFilterOrigem("__all");
+  };
+
+  // Contratos split
+  const contratosAtivos = (contratos || []).filter((c: any) => c.status !== "quitado");
+  const contratosQuitados = (contratos || []).filter((c: any) => c.status === "quitado");
 
   const renderTxList = (items: any[], emptyIcon: any, emptyMsg: string) => {
     if (txLoading) return <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>;
@@ -315,7 +314,6 @@ export default function BillsPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2">
-                      {/* Status badge with receipt warning */}
                       {isPaidNoReceipt ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -335,7 +333,6 @@ export default function BillsPage() {
                         </Badge>
                       )}
                     </div>
-                    {/* Standardized tags: Data — Cartão/Banco — Categoria — Subcategoria */}
                     <p className="text-xs text-muted-foreground mt-1 truncate">
                       {formatTxTags(tx)}
                     </p>
@@ -375,13 +372,85 @@ export default function BillsPage() {
     );
   };
 
+  const getProgressColor = (pct: number) => {
+    if (pct >= 70) return "bg-green-500";
+    if (pct >= 40) return "bg-amber-500";
+    return "bg-blue-500";
+  };
+
+  const renderContratoCard = (c: any) => {
+    const pct = c.percentual_pago ? Math.round(Number(c.percentual_pago)) : 0;
+    const saldo = Number(c.saldo_devedor_estimado || 0);
+    const parcRestantes = Number(c.parcelas_restantes || 0);
+    const parcPagas = Number(c.parcelas_pagas || 0);
+    const totalParc = Number(c.total_parcelas || 0);
+    const valorParcela = Number(c.valor_parcela || 0);
+
+    return (
+      <Card key={c.id} className="glass-card">
+        <CardContent className="py-4 px-5">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-primary" />
+                <p className="font-medium text-sm">{c.descricao}</p>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {c.credor || (c.bancos as any)?.nome || (c.cartoes as any)?.apelido || "—"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                R$ {valorParcela.toFixed(2)}/mês × {totalParc} parcelas
+              </p>
+            </div>
+            {c.status === "quitado" && (
+              <Badge className="bg-green-500/10 text-green-600 border-0 text-[10px]">✅ Quitada</Badge>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-2">
+            <div className="h-2.5 bg-accent rounded-full overflow-hidden">
+              <div className={`h-full transition-all rounded-full ${getProgressColor(pct)}`} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+              <span>{parcPagas} pagas de {totalParc} • {parcRestantes} restantes</span>
+              <span>{pct}%</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Saldo devedor: <span className="font-medium text-foreground">R$ {saldo.toFixed(2)}</span>
+          </p>
+
+          <div className="flex items-center gap-2 mt-3">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => {
+              setParcelasContratoId(c.id);
+              setParcelasContratoNome(c.descricao || "");
+            }}>
+              Ver Parcelas
+            </Button>
+            {c.status !== "quitado" && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAmortContrato(c)}>
+                Amortizar
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive ml-auto"
+              onClick={() => softDeleteTransaction.mutate(c.id)} disabled={softDeleteTransaction.isPending}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Cadastro de Contas</h1>
-            <p className="text-muted-foreground text-sm mt-1">Gerencie contas fixas, variáveis e avulsas</p>
+            <p className="text-muted-foreground text-sm mt-1">Gerencie contas fixas, avulsas e dívidas</p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
@@ -425,6 +494,19 @@ export default function BillsPage() {
               </SelectContent>
             </Select>
           )}
+          <Select value={filterOrigem} onValueChange={setFilterOrigem}>
+            <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="Forma de pgto." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Todas formas</SelectItem>
+              <SelectItem value="cartao">Cartão</SelectItem>
+              <SelectItem value="pix">PIX</SelectItem>
+              <SelectItem value="dinheiro">Dinheiro</SelectItem>
+              <SelectItem value="boleto">Boleto</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={clearFilters}>
+            Limpar Filtros
+          </Button>
         </div>
 
         {/* Alert Banners */}
@@ -487,61 +569,69 @@ export default function BillsPage() {
         <Tabs defaultValue="fixas">
           <TabsList>
             <TabsTrigger value="fixas" className="gap-1.5"><CalendarClock className="w-4 h-4" /> Fixas</TabsTrigger>
-            <TabsTrigger value="variaveis" className="gap-1.5"><TrendingUp className="w-4 h-4" /> Variáveis</TabsTrigger>
             <TabsTrigger value="avulsas" className="gap-1.5"><Zap className="w-4 h-4" /> Avulsas</TabsTrigger>
+            <TabsTrigger value="dividas" className="gap-1.5"><CreditCard className="w-4 h-4" /> Dívidas</TabsTrigger>
           </TabsList>
 
           <TabsContent value="fixas" className="space-y-4 pt-4">
             <div className="flex justify-end">
-              <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Fixa</Button>
+              <Button onClick={() => openDialog('fixa')} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Fixa</Button>
             </div>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Modelos Recorrentes</h3>
-            {renderRecList(recFixas, "Nenhuma conta fixa cadastrada")}
-
-            {allTxs.filter(t => t.categoria_tipo === "fixa").length > 0 && (
-              <>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6">Lançamentos do Mês</h3>
-                {renderTxList(
-                  allTxs.filter(t => t.categoria_tipo === "fixa"),
-                  <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
-                  ""
-                )}
-              </>
-            )}
-          </TabsContent>
-
-          <TabsContent value="variaveis" className="space-y-4 pt-4">
-            <div className="flex justify-end">
-              <Button onClick={() => setRecOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Variável</Button>
-            </div>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Modelos Recorrentes</h3>
-            {renderRecList(recVariaveis, "Nenhuma conta variável cadastrada")}
-
-            {variaveis.length > 0 && (
-              <>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-6">Lançamentos do Mês</h3>
-                {renderTxList(variaveis,
-                  <TrendingUp className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
-                  ""
-                )}
-              </>
+            {renderTxList(
+              fixasEVariaveis,
+              <CalendarClock className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
+              "Nenhuma conta fixa neste mês"
             )}
           </TabsContent>
 
           <TabsContent value="avulsas" className="space-y-4 pt-4">
             <div className="flex justify-end">
-              <Button onClick={() => setAvulsaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Avulsa</Button>
+              <Button onClick={() => openDialog('avulsa')} className="gap-2"><Plus className="w-4 h-4" /> Nova Conta Avulsa</Button>
             </div>
-            {renderTxList([...avulsas, ...dividas],
+            {renderTxList(avulsas,
               <Zap className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />,
               "Nenhuma conta avulsa neste mês"
+            )}
+          </TabsContent>
+
+          <TabsContent value="dividas" className="space-y-4 pt-4">
+            <div className="flex justify-end">
+              <Button onClick={() => setDividaOpen(true)} className="gap-2"><Plus className="w-4 h-4" /> Nova Dívida</Button>
+            </div>
+
+            {contratosLoading ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
+            ) : !contratosAtivos.length && !contratosQuitados.length ? (
+              <Card className="glass-card">
+                <CardContent className="py-12 text-center">
+                  <CreditCard className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+                  <p className="text-muted-foreground text-sm">Nenhuma dívida cadastrada</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <div className="grid gap-3">
+                  {contratosAtivos.map(renderContratoCard)}
+                </div>
+
+                {contratosQuitados.length > 0 && (
+                  <details className="mt-4">
+                    <summary className="text-xs font-semibold text-muted-foreground uppercase tracking-wider cursor-pointer">
+                      Dívidas quitadas ({contratosQuitados.length})
+                    </summary>
+                    <div className="grid gap-3 mt-3">
+                      {contratosQuitados.map(renderContratoCard)}
+                    </div>
+                  </details>
+                )}
+              </>
             )}
           </TabsContent>
         </Tabs>
       </div>
 
-      <CreateRecorrenciaDialog open={recOpen} onOpenChange={setRecOpen} />
-      <CreateTransactionDialog open={avulsaOpen} onOpenChange={setAvulsaOpen} />
+      <CreateTransactionDialog open={avulsaOpen} onOpenChange={setAvulsaOpen} defaultTab={dialogDefaultTab} />
+      <CreateDividaDialog open={dividaOpen} onOpenChange={setDividaOpen} />
       <PayVariableDialog
         open={!!payVarTx}
         onOpenChange={(o) => { if (!o) setPayVarTx(null); }}
@@ -555,6 +645,17 @@ export default function BillsPage() {
         transaction={payReceiptTx}
         onConfirm={handlePayWithReceipt}
         isPending={payTransaction.isPending}
+      />
+      <AmortizacaoDialog
+        open={!!amortContrato}
+        onOpenChange={(o) => { if (!o) setAmortContrato(null); }}
+        contrato={amortContrato}
+      />
+      <ParcelasDialog
+        contratoId={parcelasContratoId}
+        contratoNome={parcelasContratoNome}
+        open={!!parcelasContratoId}
+        onOpenChange={(o) => { if (!o) setParcelasContratoId(null); }}
       />
     </DashboardLayout>
   );
