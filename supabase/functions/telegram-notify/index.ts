@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
     }
 
     if (parts.length > 0) {
-      const greeting = adminProfile?.display_name ? `Olá, ${escapeMarkdown(adminProfile.display_name)}! 👋\n\n` : "👋\n\n";
+      const greeting = adminDisplayName ? `Olá, ${escapeMarkdown(adminDisplayName)}! 👋\n\n` : "👋\n\n";
       const msg = greeting + parts.join("\n");
 
       await safeSendTelegram(chatId, msg, LOVABLE_API_KEY, TELEGRAM_API_KEY);
