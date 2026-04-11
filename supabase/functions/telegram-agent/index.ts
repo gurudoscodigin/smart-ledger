@@ -325,6 +325,29 @@ Deno.serve(async (req) => {
       return await handlePendingContext(pendingContext, processedText, chatId, userId, fileUrl, fileName, update, supabase, LOVABLE_API_KEY, TELEGRAM_API_KEY, OPENAI_KEY);
     }
 
+    // ─── Bug 11: REMINDER DETECTION ───
+    if (isIntencaoLembrete(processedText)) {
+      const titulo = processedText
+        .replace(/me lembra(r)? de?|lembrete:?|me avisa(r)?|n[aã]o esquecer de?/gi, '')
+        .trim().substring(0, 200);
+      const dataLembrete = extractDate(processedText);
+
+      await supabase.from('lembretes').insert({
+        user_id: userId,
+        titulo: titulo || processedText.substring(0, 200),
+        data_lembrete: dataLembrete || null,
+        confirmado: false,
+      });
+
+      const dtStr = dataLembrete
+        ? ` para ${dataLembrete.split('-').reverse().join('/')}`
+        : '';
+      await sendTelegram(chatId,
+        `📝 Lembrete criado: ${titulo || processedText.substring(0, 100)}${dtStr}`,
+        LOVABLE_API_KEY, TELEGRAM_API_KEY);
+      return jsonResponse({ ok: true });
+    }
+
     // ─── FIRST MESSAGE: Smart extraction ───
     // 1. Try local keyword classification first
     const kwClassification = classifyByKeywords(processedText);
@@ -684,6 +707,19 @@ async function continueFlow(
 
 // ─── SHOW CONFIRMATION ───
 async function showConfirmation(chatId: number, ctx: any, supabase: any, lovableKey: string, telegramKey: string) {
+  // Bug 9: Validate all required fields before showing confirmation
+  const missingFields: string[] = [];
+  if (!ctx.descricao) missingFields.push("descricao");
+  if (!ctx.valor) missingFields.push("valor");
+  if (!ctx.status_pagamento) missingFields.push("status");
+  if (!ctx.categoria_ref) missingFields.push("categoria");
+  if (!ctx.cartao_id_resolved && !ctx.banco_id_resolved && !ctx.origem) missingFields.push("pagamento");
+
+  if (missingFields.length > 0) {
+    // Return to flow to ask missing fields
+    return await continueFlowFromConfirmation(ctx, chatId, supabase, lovableKey, telegramKey);
+  }
+
   const fmtDate = (d: string) => { const [y, m, dd] = d.split("-"); return `${dd}/${m}/${y}`; };
   
   let msg = `📋 Vou cadastrar:\n\n`;
@@ -696,10 +732,40 @@ async function showConfirmation(chatId: number, ctx: any, supabase: any, lovable
   if (ctx.categoria_ref) msg += `\n`;
   if (ctx.cartao_display) msg += `💳 ${ctx.cartao_display}\n`;
   else if (ctx.banco_display) msg += `🏦 ${ctx.banco_display}\n`;
-  else if (ctx.origem) msg += `💳 ${ctx.origem}\n`;
+  else if (ctx.origem) {
+    const origemLabels: Record<string, string> = { pix: "PIX", cartao: "💳 Cartão", boleto: "Boleto", dinheiro: "💵 Dinheiro" };
+    msg += `💳 ${origemLabels[ctx.origem] || ctx.origem}\n`;
+  }
   msg += `\n✅ Está correto? (sim/não)`;
   
   await sendTelegram(chatId, msg, lovableKey, telegramKey);
+  return jsonResponse({ ok: true });
+}
+
+// Helper: redirect back to continueFlow when confirmation has missing fields
+async function continueFlowFromConfirmation(ctx: any, chatId: number, supabase: any, lovableKey: string, telegramKey: string) {
+  const missing: string[] = [];
+  if (!ctx.status_pagamento) missing.push("status");
+  if (!ctx.cartao_id_resolved && !ctx.banco_id_resolved && !ctx.origem) missing.push("pagamento");
+  if (!ctx.categoria_ref) missing.push("categoria");
+
+  const userId = ctx.user_id || "";
+  const nextMissing = missing[0] || "status";
+
+  if (nextMissing === "status") {
+    ctx.step = "ask_status";
+    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+    await sendTelegram(chatId, `❓ Essa conta já foi paga ou ainda está pendente?`, lovableKey, telegramKey);
+  } else if (nextMissing === "pagamento") {
+    ctx.step = "ask_pagamento";
+    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+    await sendTelegram(chatId, `❓ Essa despesa foi no cartão, PIX, boleto ou dinheiro?`, lovableKey, telegramKey);
+  } else if (nextMissing === "categoria") {
+    ctx.step = "ask_categoria";
+    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+    await sendTelegram(chatId, `🏷️ Qual a categoria?`, lovableKey, telegramKey);
+  }
+
   return jsonResponse({ ok: true });
 }
 
@@ -1120,6 +1186,14 @@ async function extractRecurrenceData(text: string, _userId: string, _supabase: a
 // ─── NLP EXTRACTION ───
 async function extractTransactionData(text: string, _userId: string, _supabase: any, apiKey: string) {
   const today = new Date().toISOString().split("T")[0];
+
+  // Bug 10: Fetch user categories from DB
+  const { data: userCats } = await _supabase
+    .from('categorias')
+    .select('nome')
+    .eq('user_id', _userId);
+  const catNames = (userCats || []).map((c: any) => c.nome).join(', ');
+
   const response = await fetch(AI_GATEWAY, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -1141,7 +1215,17 @@ REGRAS DE EXTRAÇÃO:
 - PIX → origem "pix"
 - "já paguei"/"paguei"/"acabei de pagar"/"debitou"/"saiu da conta" → status_pagamento "pago"
 - "vence"/"pendente"/"preciso pagar" → status_pagamento "pendente"
-- Extraia: descricao, valor, data_vencimento, status_pagamento, origem, cartao_ref, banco_ref, categoria_ref, subcategoria` },
+- Extraia: descricao, valor, data_vencimento, status_pagamento, origem, cartao_ref, banco_ref, categoria_ref, subcategoria
+
+NORMALIZAÇÃO DE DESCRIÇÃO: Na extração de descricao, normalize o texto para um nome comercial limpo. Remova verbos, preposições e expressões coloquiais.
+Exemplos:
+  'comprei produto de limpeza no sonda' → 'Sonda - Produto de Limpeza'
+  'paguei a internet da vivo' → 'Vivo - Internet'
+  'hostinger do site' → 'Hostinger - Hospedagem'
+Mantenha o nome do estabelecimento/fornecedor + descrição breve do item.
+
+CATEGORIAS DISPONÍVEIS (use APENAS estas): ${catNames || 'Nenhuma cadastrada'}.
+Nunca crie nome de categoria que não esteja nesta lista.` },
         { role: "user", content: text },
       ],
       tools: [{ type: "function", function: { name: "extract_transaction", description: "Extract transaction", parameters: { type: "object", properties: { status: { type: "string", enum: ["complete", "incomplete", "not_financial"] }, descricao: { type: "string" }, valor: { type: "number" }, data_vencimento: { type: "string" }, data_pagamento: { type: "string" }, status_pagamento: { type: "string", enum: ["pendente", "pago"] }, categoria_tipo: { type: "string" }, origem: { type: "string" }, cartao_ref: { type: "string" }, banco_ref: { type: "string" }, categoria_ref: { type: "string" }, subcategoria: { type: "string" }, missing_question: { type: "string" } }, required: ["status"] } } }],
