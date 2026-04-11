@@ -10,7 +10,7 @@ export function useLembretes() {
   const query = useQuery({
     queryKey: ["lembretes"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("lembretes")
         .select("*")
         .order("data_lembrete", { ascending: true, nullsFirst: false });
@@ -22,7 +22,7 @@ export function useLembretes() {
 
   const create = useMutation({
     mutationFn: async (params: { titulo: string; descricao?: string; data_lembrete?: string }) => {
-      const { error } = await supabase.from("lembretes").insert({
+      const { error } = await (supabase as any).from("lembretes").insert({
         ...params,
         user_id: user!.id,
       });
@@ -37,7 +37,7 @@ export function useLembretes() {
 
   const toggleConfirmado = useMutation({
     mutationFn: async ({ id, confirmado }: { id: string; confirmado: boolean }) => {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("lembretes")
         .update({
           confirmado,
@@ -54,7 +54,7 @@ export function useLembretes() {
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("lembretes").delete().eq("id", id);
+      const { error } = await (supabase as any).from("lembretes").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -66,7 +66,7 @@ export function useLembretes() {
 
   const clearConfirmados = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("lembretes").delete().eq("confirmado", true);
+      const { error } = await (supabase as any).from("lembretes").delete().eq("confirmado", true);
       if (error) throw error;
     },
     onSuccess: () => {
