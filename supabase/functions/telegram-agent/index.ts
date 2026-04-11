@@ -96,6 +96,14 @@ function extractDate(text: string): string | null {
   return null;
 }
 
+// ─── REMINDER INTENT DETECTION ───
+function isIntencaoLembrete(text: string): boolean {
+  const patterns = ['me lembra', 'lembrar de', 'criar lembrete', 'lembrete:',
+    'me avisa', 'nao esquecer', 'não esquecer', 'me lembre'];
+  const normalized = removeAccents(text.toLowerCase());
+  return patterns.some(p => normalized.includes(removeAccents(p)));
+}
+
 // ─── VALUE EXTRACTION ───
 function extractValue(text: string): number | null {
   const normalized = removeAccents(text.toLowerCase());
