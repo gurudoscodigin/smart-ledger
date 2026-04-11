@@ -271,7 +271,7 @@ export default function ControlCenter() {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {(users || []).map(u => (
+              {(users || []).filter(u => u.display_name !== '[Removido]').map(u => (
                 <div key={u.user_id} className="flex items-center justify-between py-3 border-b border-border/30 last:border-0">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center">
