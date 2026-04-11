@@ -14,6 +14,234 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_classification_rules: {
+        Row: {
+          active: boolean | null
+          categoria_id: string | null
+          categoria_tipo: string | null
+          created_at: string | null
+          id: string
+          pattern: string
+          priority: number | null
+          subcategoria: string | null
+          user_id: string
+        }
+        Insert: {
+          active?: boolean | null
+          categoria_id?: string | null
+          categoria_tipo?: string | null
+          created_at?: string | null
+          id?: string
+          pattern: string
+          priority?: number | null
+          subcategoria?: string | null
+          user_id: string
+        }
+        Update: {
+          active?: boolean | null
+          categoria_id?: string | null
+          categoria_tipo?: string | null
+          created_at?: string | null
+          id?: string
+          pattern?: string
+          priority?: number | null
+          subcategoria?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_classification_rules_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_decision_logs: {
+        Row: {
+          categoria_suggested: string | null
+          confidence_level: number | null
+          confirmed: boolean | null
+          created_at: string | null
+          decision_basis: string | null
+          id: string
+          intent: string | null
+          message_text: string | null
+          payment_source: string | null
+          recurrence_used: string | null
+          subcategoria_suggested: string | null
+          user_correction: boolean | null
+          user_id: string
+          vendor_detected: string | null
+        }
+        Insert: {
+          categoria_suggested?: string | null
+          confidence_level?: number | null
+          confirmed?: boolean | null
+          created_at?: string | null
+          decision_basis?: string | null
+          id?: string
+          intent?: string | null
+          message_text?: string | null
+          payment_source?: string | null
+          recurrence_used?: string | null
+          subcategoria_suggested?: string | null
+          user_correction?: boolean | null
+          user_id: string
+          vendor_detected?: string | null
+        }
+        Update: {
+          categoria_suggested?: string | null
+          confidence_level?: number | null
+          confirmed?: boolean | null
+          created_at?: string | null
+          decision_basis?: string | null
+          id?: string
+          intent?: string | null
+          message_text?: string | null
+          payment_source?: string | null
+          recurrence_used?: string | null
+          subcategoria_suggested?: string | null
+          user_correction?: boolean | null
+          user_id?: string
+          vendor_detected?: string | null
+        }
+        Relationships: []
+      }
+      agent_memory_rules: {
+        Row: {
+          created_at: string | null
+          id: string
+          rule_key: string
+          rule_type: string
+          rule_value: Json
+          source: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          rule_key: string
+          rule_type: string
+          rule_value?: Json
+          source?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          rule_key?: string
+          rule_type?: string
+          rule_value?: Json
+          source?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      agent_prompt_versions: {
+        Row: {
+          active: boolean | null
+          content: string
+          created_at: string | null
+          id: string
+          prompt_name: string
+          version: string
+        }
+        Insert: {
+          active?: boolean | null
+          content: string
+          created_at?: string | null
+          id?: string
+          prompt_name: string
+          version: string
+        }
+        Update: {
+          active?: boolean | null
+          content?: string
+          created_at?: string | null
+          id?: string
+          prompt_name?: string
+          version?: string
+        }
+        Relationships: []
+      }
+      agent_vendor_aliases: {
+        Row: {
+          alias: string
+          banco_id: string | null
+          canonical_name: string
+          cartao_id: string | null
+          categoria_id: string | null
+          categoria_tipo: string | null
+          confidence: number | null
+          created_at: string | null
+          id: string
+          is_recurrent: boolean | null
+          is_variable: boolean | null
+          origem: string | null
+          subcategoria: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          alias: string
+          banco_id?: string | null
+          canonical_name: string
+          cartao_id?: string | null
+          categoria_id?: string | null
+          categoria_tipo?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          is_recurrent?: boolean | null
+          is_variable?: boolean | null
+          origem?: string | null
+          subcategoria?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          alias?: string
+          banco_id?: string | null
+          canonical_name?: string
+          cartao_id?: string | null
+          categoria_id?: string | null
+          categoria_tipo?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          is_recurrent?: boolean | null
+          is_variable?: boolean | null
+          origem?: string | null
+          subcategoria?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_vendor_aliases_banco_id_fkey"
+            columns: ["banco_id"]
+            isOneToOne: false
+            referencedRelation: "bancos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_vendor_aliases_cartao_id_fkey"
+            columns: ["cartao_id"]
+            isOneToOne: false
+            referencedRelation: "cartoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_vendor_aliases_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       amortizacoes: {
         Row: {
           banco_id: string | null
