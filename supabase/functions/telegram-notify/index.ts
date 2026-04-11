@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     }
 
     let notified = 0;
-    const userId = adminRole.user_id;
+    const userId = adminUserId;
     const today = new Date().toISOString().split("T")[0];
     const twoDaysFromNow = new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0];
     const startOfMonth = today.substring(0, 8) + "01";
