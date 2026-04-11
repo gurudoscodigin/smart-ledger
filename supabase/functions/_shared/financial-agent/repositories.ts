@@ -1,17 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
 // FINANCIAL AGENT — REPOSITORIES
+// FIX #11: All operations now check for errors and log them
 // ═══════════════════════════════════════════════════════════════
 
 import type { DecisionLog, DecisionBasis, AgentIntent } from "./types.ts";
 
 // ═══════════════ AGENT REPO ═══════════════
-// Operations on agent-specific tables
 
 export async function logDecision(
   supabase: any,
   log: DecisionLog
 ): Promise<void> {
-  await supabase.from("agent_decision_logs").insert({
+  const { error } = await supabase.from("agent_decision_logs").insert({
     user_id: log.user_id,
     message_text: log.message_text,
     intent: log.intent,
@@ -25,6 +25,7 @@ export async function logDecision(
     user_correction: log.user_correction,
     confirmed: log.confirmed,
   });
+  if (error) console.error("logDecision error:", error.message);
 }
 
 export async function saveVendorAlias(
@@ -44,7 +45,7 @@ export async function saveVendorAlias(
     confidence?: number;
   }
 ): Promise<void> {
-  await supabase.from("agent_vendor_aliases").upsert({
+  const { error } = await supabase.from("agent_vendor_aliases").upsert({
     user_id: userId,
     alias: alias.toLowerCase().trim(),
     canonical_name: canonicalName,
@@ -58,6 +59,7 @@ export async function saveVendorAlias(
     is_variable: details.is_variable || false,
     confidence: details.confidence || 80,
   }, { onConflict: "user_id,alias" });
+  if (error) console.error("saveVendorAlias error:", error.message);
 }
 
 export async function saveMemoryRule(
@@ -68,13 +70,14 @@ export async function saveMemoryRule(
   ruleValue: Record<string, unknown>,
   source: string
 ): Promise<void> {
-  await supabase.from("agent_memory_rules").upsert({
+  const { error } = await supabase.from("agent_memory_rules").upsert({
     user_id: userId,
     rule_type: ruleType,
     rule_key: ruleKey,
     rule_value: ruleValue,
     source,
   }, { onConflict: "user_id,rule_type,rule_key" });
+  if (error) console.error("saveMemoryRule error:", error.message);
 }
 
 export async function getMemoryRule(
@@ -113,7 +116,6 @@ export async function getClassificationRules(
 }
 
 // ═══════════════ SYSTEM REPO ═══════════════
-// Read-only operations on core system tables
 
 export async function getMonthlyTransactions(
   supabase: any,
@@ -199,7 +201,8 @@ export async function insertReceipt(
     uploaded_by: string;
   }
 ): Promise<void> {
-  await supabase.from("comprovantes").insert(receipt);
+  const { error } = await supabase.from("comprovantes").insert(receipt);
+  if (error) console.error("insertReceipt error:", error.message);
 }
 
 export async function savePreference(
@@ -213,7 +216,7 @@ export async function savePreference(
     categoria_id?: string | null;
   }
 ): Promise<void> {
-  await supabase.from("preferencias_origem").upsert({
+  const { error } = await supabase.from("preferencias_origem").upsert({
     user_id: userId,
     item_nome: itemName,
     cartao_id: details.cartao_id || null,
@@ -221,6 +224,7 @@ export async function savePreference(
     origem: details.origem || null,
     categoria_id: details.categoria_id || null,
   }, { onConflict: "user_id,item_nome" });
+  if (error) console.error("savePreference error:", error.message);
 }
 
 export async function updateBankBalance(
@@ -228,7 +232,8 @@ export async function updateBankBalance(
   bankId: string,
   newBalance: number
 ): Promise<void> {
-  await supabase.from("bancos").update({ saldo_atual: newBalance }).eq("id", bankId);
+  const { error } = await supabase.from("bancos").update({ saldo_atual: newBalance }).eq("id", bankId);
+  if (error) console.error("updateBankBalance error:", error.message);
 }
 
 export async function getRecentTransactionsForBI(
