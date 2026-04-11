@@ -1,85 +1,58 @@
 
 
-# Relatório de Auditoria Final + Plano de Correção
+# Plano de Correção Final — Smart Ledger
 
-## O QUE FUNCIONA
+## Estado Atual (Testes Realizados)
 
-1. **Identidade unificada** -- O SQL executado vinculou `telegram_id = 8485488912` ao user `e8fb6f24`. O agente agora resolve corretamente o user com dados.
-2. **telegram-poll** -- Executando ~50s por ciclo (correto). Cron `* * * * *` ativo.
-3. **Comandos do agente** -- `/resumo`, `/pendencias`, `/limite`, `/buscar`, `/relatorio`, `/pix`, `/nova_conta`, `/nova_divida`, `/novo_banco`, `/novo_cartao` todos retornam `ok: true` e executam queries no user correto.
-4. **Pending context** -- `savePendingContext` com fallback por `chat_id` implementado.
-5. **Fluxo conversacional** -- Steps ask_status, ask_pagamento, ask_cartao, ask_categoria, ask_subcategoria, confirm todos implementados.
-6. **Dívida** -- Fluxo completo com contrato + parcelas implementado.
-7. **Lembretes** -- Criação e confirmação via `/lembretes` funcionando.
-8. **Cron jobs** -- `poll-telegram-updates` (cada minuto), `monthly-rollover-daily` (00:05 UTC), `monthly-rollover` (dia 1).
-9. **Web UI** -- Todas as rotas (`/`, `/bills`, `/cards`, `/reports`, `/categorias`, `/lembretes`, `/settings`, `/trash`) funcionando.
-10. **Regex de confirmação** -- Corrigido com word boundaries (`^sim$`, `^ok$`, etc.).
+**O QUE FUNCIONA:**
+- Identidade unificada (e8fb6f24 com telegram_id correto)
+- telegram-notify: retornou `notified: 1` com sucesso
+- Agente resolve o user correto via telegram_id
+- Fluxo conversacional com pending_context funciona (savePendingContext by chat_id)
+- Rota /auditor registrada em App.tsx e no sidebar
+- Todas as rotas web funcionando
 
----
+**O QUE ESTÁ QUEBRADO:**
 
-## BUGS RESTANTES (5 itens)
+### BUG 1 — CRÍTICO: Drive Mirror falha com "Credential not found"
+O `drive-mirror` usa `GOOGLE_DRIVE_API_KEY` como secret, mas **não existe um Google Drive connector linkado ao projeto**. O secret `GOOGLE_DRIVE_API_KEY` existe mas não é um connector válido — é apenas um valor solto. O gateway retorna `unauthorized`.
 
-### BUG 1 — CRÍTICO: telegram-notify pega o admin errado
+**Correção:** Conectar o Google Drive connector via `standard_connectors--connect`. Isso gera credentials válidas para o gateway. Sem isso, o `drive-mirror` nunca vai funcionar.
 
-Existem 2 admins no `user_roles`: `77193628` (sem telegram_id) e `e8fb6f24` (com telegram_id). A query `.limit(1).single()` retorna o `77193628` primeiro, que não tem `telegram_id` no profile. Resultado: `"reason": "no chat_id"` — notificações nunca são enviadas.
+### BUG 2 — MÉDIO: telegram-poll morre em ~15s
+O poll faz boot e shutdown a cada 15 segundos ao invés de rodar 55s. Provável causa: o `getUpdates` com long-polling de 20s está retornando imediatamente (offset já consumido) e o loop termina quando `timeout < 1`. Ou a edge function tem um wall-clock timeout menor que 55s.
 
-**Correção:** Na query do admin, fazer JOIN com profiles e filtrar pelo que tem `telegram_id` preenchido. Ou reordenar para pegar o admin com telegram_id.
+**Correção:** Investigar o timeout real da edge function. Adicionar um `await new Promise(r => setTimeout(r, 2000))` quando `updates.length === 0` para evitar busy-loop e permitir que o long-polling do Telegram funcione.
 
-### BUG 2 — MÉDIO: Falta cron para telegram-notify
+### BUG 3 — MÉDIO: Falta cron para telegram-notify
+Não existe cron job configurado. As notificações só funcionam quando chamadas manualmente.
 
-Não existe cron job para `telegram-notify`. Os 3 crons existentes são: `poll-telegram-updates`, `monthly-rollover`, `monthly-rollover-daily`. Sem cron, as notificações proativas (contas vencendo, atrasadas, lembretes do dia) nunca são disparadas automaticamente.
+**Correção:** O user precisa executar o SQL de criação do cron no Supabase SQL Editor (já fornecido anteriormente).
 
-**Correção:** Criar cron job `notify-telegram-daily` com schedule `0 11 * * *` (8h BRT) chamando `/functions/v1/telegram-notify`.
+### BUG 4 — BAIXO: Comprovantes antigos com path do user errado
+7 comprovantes usam o user_id `77193628` no path. Funciona porque o `file_path` salvo no DB corresponde ao path real no Storage. Cosmético.
 
-### BUG 3 — MÉDIO: Rota /auditor inexistente
-
-`src/pages/Auditor.tsx` existe mas não está registrada em `App.tsx` nem no sidebar.
-
-**Correção:** Adicionar rota `/auditor` em `App.tsx` e item no sidebar com ícone `Shield` ou `FileSearch`.
-
-### BUG 4 — MÉDIO: Comprovantes antigos têm path com user_id errado
-
-5 comprovantes usam path `77193628-bdd3.../transacaoId/...` mas o user correto é `e8fb6f24`. Os arquivos no Storage estão com o path antigo. O `useComprovantes.ts` busca por `transacao_id` na tabela (não pelo path), então a listagem funciona. Porém o download via `supabase.storage.download(file_path)` ainda funciona porque o path no Storage é o mesmo que está salvo. Isso é cosmético — funciona, mas está inconsistente.
-
-**Correção:** Nenhuma ação urgente. Novos uploads já usam o user_id correto (`e8fb6f24`).
-
-### BUG 5 — BAIXO: Drive Mirror sem connector Google Drive
-
-O secret `GOOGLE_DRIVE_API_KEY` existe mas não há connector Google Drive linkado ao projeto. O `drive-mirror` function corretamente retorna `queued: true` quando as keys não estão configuradas. Para ativar o espelhamento real, é preciso conectar o Google Drive via `standard_connectors--connect`.
-
-**Correção:** Conectar o Google Drive connector. Sem isso, o drive-mirror vai sempre retornar "queued" sem fazer upload real.
+**Correção:** Nenhuma ação necessária. Novos uploads usam o path correto.
 
 ---
 
-## PLANO DE CORREÇÃO
+## Plano de Implementação
 
-### Passo 1 — Fix telegram-notify (admin errado)
-Alterar `telegram-notify/index.ts` para fazer JOIN com profiles e filtrar admin que tenha `telegram_id` preenchido:
-```sql
-SELECT ur.user_id FROM user_roles ur 
-JOIN profiles p ON p.user_id = ur.user_id 
-WHERE ur.role = 'admin' AND p.telegram_id IS NOT NULL
-LIMIT 1
-```
+### Passo 1 — Conectar Google Drive Connector
+Usar `standard_connectors--connect` com `connector_id: google_drive` para linkar uma conta Google Drive ao projeto. Isso disponibiliza credentials válidas para o gateway.
 
-### Passo 2 — Criar cron para telegram-notify
-Executar SQL no Supabase (via insert tool, não migration):
-```sql
-SELECT cron.schedule(
-  'notify-telegram-daily',
-  '0 11 * * *',
-  $$ SELECT net.http_post(
-    url:='https://fjevawaawhnoxskalwsm.supabase.co/functions/v1/telegram-notify',
-    headers:='{"Content-Type":"application/json","Authorization":"Bearer <anon_key>"}'::jsonb,
-    body:='{}'::jsonb
-  ) AS request_id; $$
-);
-```
+### Passo 2 — Atualizar drive-mirror para usar connector correto
+O código atual já usa `GOOGLE_DRIVE_API_KEY` e `LOVABLE_API_KEY` — após conectar o connector, esses secrets são providos automaticamente. Verificar se os nomes dos secrets correspondem ao que o connector gera.
 
-### Passo 3 — Registrar rota /auditor
-- Importar `Auditor` em `App.tsx`
-- Adicionar `<Route path="/auditor" ...>`
-- Adicionar item no sidebar com ícone adequado
+### Passo 3 — Fix telegram-poll timeout
+Adicionar um sleep de 2s no loop quando não há updates para evitar que o loop termine prematuramente. Isso permite que o long-polling do Telegram tenha tempo para retornar updates reais.
 
-### Passo 4 — Deploy telegram-notify atualizado
+### Passo 4 — Redeploy + Teste
+- Deploy `telegram-poll` e `drive-mirror`
+- Testar drive-mirror com um comprovante existente
+- Verificar que telegram-poll roda >45s por ciclo
+- Enviar mensagem no Telegram e confirmar processamento
+
+### Passo 5 — Orientar user sobre cron do telegram-notify
+Fornecer SQL pronto para o user executar no Supabase SQL Editor.
 
