@@ -25,7 +25,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
   const { data: cartoes } = useCartoes();
   const { data: bancos } = useBancos();
   const { data: categorias } = useCategorias();
-  const [tab, setTab] = useState(defaultTab || "avulsa");
+  const [tab, setTab] = useState<string>(defaultTab || "avulsa");
 
   useEffect(() => {
     if (defaultTab) setTab(defaultTab);
