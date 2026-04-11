@@ -37,7 +37,7 @@ Deno.serve(async (_req) => {
       if (remainingMs < MIN_REMAINING_MS) break;
 
       // Dynamic timeout: up to 20s, but never exceed remaining time minus buffer
-      const timeout = Math.min(20, Math.floor(remainingMs / 1000) - 5);
+      const timeout = Math.min(50, Math.floor(remainingMs / 1000) - 5);
       if (timeout < 1) break;
 
       const response = await fetch(`${GATEWAY_URL}/getUpdates`, {
@@ -58,7 +58,11 @@ Deno.serve(async (_req) => {
       if (!response.ok) return errorResponse(JSON.stringify(data), 502);
 
       const updates = data.result ?? [];
-      if (updates.length === 0) continue;
+      if (updates.length === 0) {
+        // Sleep 2s to avoid busy-loop when no updates arrive
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
 
       // Store messages
       const rows = updates
