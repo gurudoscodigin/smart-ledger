@@ -859,12 +859,15 @@ async function handleCommand(
     }
 
     case "/limite": {
-      const { data: cartoes } = await supabase.from("cartoes").select("apelido, final_cartao, limite_total, limite_disponivel, bandeira").eq("user_id", userId).is("deleted_at", null);
+      const { data: cartoes } = await supabase.from("cartoes").select("id, apelido, final_cartao, limite_total, bandeira").eq("user_id", userId).is("deleted_at", null);
       if (!cartoes?.length) { await sendTelegram(chatId, "💳 Nenhum cartão cadastrado.", lovableKey, telegramKey); break; }
       let msg = "💳 Limites\n\n";
       for (const c of cartoes) {
-        const pct = Math.round((c.limite_disponivel / c.limite_total) * 100);
-        msg += `${c.apelido} (${c.final_cartao})\nR$ ${Number(c.limite_disponivel).toFixed(2)} / R$ ${Number(c.limite_total).toFixed(2)} (${pct}%)\n\n`;
+        const { data: txs } = await supabase.from("transacoes").select("valor").eq("cartao_id", c.id).is("deleted_at", null).in("status", ["pendente", "atrasado"]);
+        const used = (txs || []).reduce((s: number, t: any) => s + Number(t.valor), 0);
+        const disponivel = Number(c.limite_total) - used;
+        const pct = Number(c.limite_total) > 0 ? Math.round((disponivel / Number(c.limite_total)) * 100) : 0;
+        msg += `${c.apelido} (${c.final_cartao})\nR$ ${disponivel.toFixed(2)} / R$ ${Number(c.limite_total).toFixed(2)} (${pct}%)\n\n`;
       }
       await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
@@ -1048,9 +1051,27 @@ async function handleCommand(
       break;
     }
 
+    case "/lembretes": {
+      const { data: lembs } = await supabase
+        .from("lembretes")
+        .select("id, titulo, descricao, data_lembrete")
+        .eq("user_id", userId)
+        .eq("confirmado", false)
+        .order("data_lembrete", { nullsFirst: false });
+      if (!lembs?.length) { await sendTelegram(chatId, "✅ Nenhum lembrete aberto!", lovableKey, telegramKey); break; }
+      let msg = "📝 Lembretes abertos:\n\n";
+      for (const l of lembs) {
+        const data = l.data_lembrete ? ` (${l.data_lembrete})` : "";
+        msg += `• ${l.titulo}${data}\n`;
+        if (l.descricao) msg += `  ${l.descricao}\n`;
+      }
+      await sendTelegram(chatId, msg, lovableKey, telegramKey);
+      break;
+    }
+
     default:
       await sendTelegram(chatId,
-        "📋 Comandos:\n\n💰 Cadastro:\n/nova_conta — Nova conta\n/novo_banco — Novo banco\n/novo_cartao — Novo cartão\n/nova_recorrencia — Conta fixa\n/adicionar_saldo — Entrada no banco\n\n📊 Consultas:\n/resumo — Gastos do mês\n/relatorio — Relatório mensal\n/pendencias — Pendentes\n/limite — Limites\n/buscar — Buscar\n/pix — Dados PIX\n/anexar — Comprovante\n\n⚙️ Admin:\n/alterar_limite",
+        "📋 Comandos:\n\n💰 Cadastro:\n/nova_conta — Nova conta\n/novo_banco — Novo banco\n/novo_cartao — Novo cartão\n/nova_recorrencia — Conta fixa\n/adicionar_saldo — Entrada no banco\n\n📊 Consultas:\n/resumo — Gastos do mês\n/relatorio — Relatório mensal\n/pendencias — Pendentes\n/limite — Limites\n/buscar — Buscar\n/pix — Dados PIX\n/anexar — Comprovante\n/lembretes — Lembretes\n\n⚙️ Admin:\n/alterar_limite",
         lovableKey, telegramKey);
   }
 
