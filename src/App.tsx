@@ -12,6 +12,7 @@ import TrashPage from "./pages/TrashPage";
 import BillsPage from "./pages/BillsPage";
 import CategoriasPage from "./pages/CategoriasPage";
 import LembretesPage from "./pages/LembretesPage";
+import Auditor from "./pages/Auditor";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
@@ -56,6 +57,7 @@ const App = () => (
             <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
             <Route path="/categorias" element={<ProtectedRoute><CategoriasPage /></ProtectedRoute>} />
             <Route path="/lembretes" element={<ProtectedRoute><LembretesPage /></ProtectedRoute>} />
+            <Route path="/auditor" element={<ProtectedRoute><Auditor /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
