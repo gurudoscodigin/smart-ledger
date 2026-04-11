@@ -48,44 +48,71 @@ Deno.serve(async (req) => {
 
     const globalChatId = Deno.env.get("TELEGRAM_CHAT_ID");
 
-    const { data: adminRole } = await supabase
-      .from("user_roles")
-      .select("user_id")
-      .eq("role", "admin")
-      .limit(1)
-      .single();
-
-    if (!adminRole) {
-      return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no admin" }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
+    // FIX #1: Query admin that actually has a telegram_id linked
+    let adminUserId: string;
     let chatId: number;
+    let adminDisplayName: string | null = null;
+
     if (globalChatId) {
       chatId = Number(globalChatId);
-    } else {
-      const { data: adminProfile } = await supabase
-        .from("profiles")
-        .select("telegram_id")
-        .eq("user_id", adminRole.user_id)
+      // Still need to find an admin user for data queries
+      const { data: adminRole } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "admin")
+        .limit(1)
         .single();
-      if (!adminProfile?.telegram_id) {
+      if (!adminRole) {
+        return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no admin" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      adminUserId = adminRole.user_id;
+    } else {
+      // JOIN user_roles with profiles to find admin WITH telegram_id
+      const { data: adminsWithTelegram } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "admin");
+
+      if (!adminsWithTelegram?.length) {
+        return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no admin" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Find which admin has telegram_id
+      const adminIds = adminsWithTelegram.map((a: any) => a.user_id);
+      const { data: profileWithTelegram } = await supabase
+        .from("profiles")
+        .select("user_id, telegram_id, display_name")
+        .in("user_id", adminIds)
+        .not("telegram_id", "is", null)
+        .limit(1)
+        .single();
+
+      if (!profileWithTelegram?.telegram_id) {
         return new Response(JSON.stringify({ ok: true, notified: 0, reason: "no chat_id" }), {
           headers: { "Content-Type": "application/json" },
         });
       }
-      chatId = Number(adminProfile.telegram_id);
+
+      chatId = Number(profileWithTelegram.telegram_id);
+      adminUserId = profileWithTelegram.user_id;
+      adminDisplayName = profileWithTelegram.display_name;
     }
 
-    const { data: adminProfile } = await supabase
-      .from("profiles")
-      .select("display_name")
-      .eq("user_id", adminRole.user_id)
-      .single();
+    if (!adminDisplayName) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("user_id", adminUserId)
+        .single();
+      adminDisplayName = prof?.display_name ?? null;
+    }
 
     let notified = 0;
-    const userId = adminRole.user_id;
+    const userId = adminUserId;
     const today = new Date().toISOString().split("T")[0];
     const twoDaysFromNow = new Date(Date.now() + 2 * 86400000).toISOString().split("T")[0];
     const startOfMonth = today.substring(0, 8) + "01";
@@ -211,7 +238,7 @@ Deno.serve(async (req) => {
     }
 
     if (parts.length > 0) {
-      const greeting = adminProfile?.display_name ? `Olá, ${escapeMarkdown(adminProfile.display_name)}! 👋\n\n` : "👋\n\n";
+      const greeting = adminDisplayName ? `Olá, ${escapeMarkdown(adminDisplayName)}! 👋\n\n` : "👋\n\n";
       const msg = greeting + parts.join("\n");
 
       await safeSendTelegram(chatId, msg, LOVABLE_API_KEY, TELEGRAM_API_KEY);
