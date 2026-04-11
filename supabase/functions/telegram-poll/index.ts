@@ -58,7 +58,11 @@ Deno.serve(async (_req) => {
       if (!response.ok) return errorResponse(JSON.stringify(data), 502);
 
       const updates = data.result ?? [];
-      if (updates.length === 0) continue;
+      if (updates.length === 0) {
+        // Sleep 2s to avoid busy-loop when no updates arrive
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
 
       // Store messages
       const rows = updates
