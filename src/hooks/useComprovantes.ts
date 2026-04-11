@@ -45,6 +45,7 @@ export function useComprovantes(transacaoId?: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["comprovantes"] });
+      queryClient.invalidateQueries({ queryKey: ["comprovantes-check"] });
       toast.success("Comprovante anexado");
     },
     onError: (e: Error) => toast.error(e.message),

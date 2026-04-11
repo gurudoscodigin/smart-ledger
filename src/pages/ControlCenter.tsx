@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
-import { UserPlus, Shield, Clock, Lock, AlertTriangle, Mail, User, Eye, EyeOff, Pencil, Trash2, Settings } from "lucide-react";
+import { UserPlus, Shield, Lock, AlertTriangle, Mail, User, Eye, EyeOff, Pencil, Trash2, Settings } from "lucide-react";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -42,7 +42,6 @@ export default function ControlCenter() {
   const [newRole, setNewRole] = useState<string>("assistente");
   const [showPassword, setShowPassword] = useState(false);
   const [creating, setCreating] = useState(false);
-  // Local permissions state per user (stored in localStorage until we add a DB table)
   const [userPermissions, setUserPermissions] = useState<Record<string, Record<string, boolean>>>(() => {
     try { return JSON.parse(localStorage.getItem("user_permissions") || "{}"); } catch { return {}; }
   });
@@ -67,18 +66,9 @@ export default function ControlCenter() {
     enabled: !!user && role === "admin",
   });
 
-  const { data: auditLogs } = useQuery({
-    queryKey: ["audit-logs"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(20);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && role === "admin",
-  });
-
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (creating) return;
     setCreating(true);
     try {
       const { error } = await supabase.auth.signUp({
@@ -178,8 +168,8 @@ export default function ControlCenter() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Control Center</h1>
-            <p className="text-muted-foreground text-sm mt-1">Segurança, permissões e auditoria</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Configurações</h1>
+            <p className="text-muted-foreground text-sm mt-1">Gestão de usuários e permissões</p>
           </div>
           <Badge className="bg-status-paid/10 text-status-paid border-0 gap-1">
             <Lock className="w-3 h-3" /> Sessão Segura
@@ -203,8 +193,8 @@ export default function ControlCenter() {
                   {permissions.map((p, i) => (
                     <tr key={i} className="border-b border-border/30 last:border-0">
                       <td className="py-2.5 pr-4">{p.action}</td>
-                      <td className="text-center py-2.5">{p.admin ? "✅" : "❌"}</td>
-                      <td className="text-center py-2.5">{p.assistente ? "✅" : "❌"}</td>
+                      <td className="text-center py-2.5">{p.admin ? <span className="text-green-500">✅</span> : <span className="text-red-400">❌</span>}</td>
+                      <td className="text-center py-2.5">{p.assistente ? <span className="text-green-500">✅</span> : <span className="text-red-400">❌</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -224,43 +214,47 @@ export default function ControlCenter() {
               <DialogContent>
                 <DialogHeader><DialogTitle>Criar Novo Usuário</DialogTitle></DialogHeader>
                 <form onSubmit={handleCreateUser} className="space-y-4 pt-4">
-                  <div className="space-y-2">
-                    <Label>Nome Completo</Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input placeholder="Nome completo" value={newName} onChange={e => setNewName(e.target.value)} className="pl-10" required />
+                  <fieldset disabled={creating} style={{ border: "none", padding: 0, margin: 0 }}>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Nome Completo</Label>
+                        <div className="relative">
+                          <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Input placeholder="Nome completo" value={newName} onChange={e => setNewName(e.target.value)} className="pl-10" required />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>E-mail</Label>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Input type="email" placeholder="email@exemplo.com" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="pl-10" required />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Senha</Label>
+                        <div className="relative">
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Input type={showPassword ? "text" : "password"} placeholder="Mínimo 8 caracteres" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="pl-10 pr-10" minLength={8} required />
+                          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Função</Label>
+                        <Select value={newRole} onValueChange={setNewRole} defaultValue="assistente">
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">Administrador</SelectItem>
+                            <SelectItem value="assistente">Assistente</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {newRole === "admin" && (
+                          <p className="text-xs text-amber-500 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Acesso total ao sistema.</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>E-mail</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input type="email" placeholder="email@exemplo.com" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="pl-10" required />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Senha</Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input type={showPassword ? "text" : "password"} placeholder="Mínimo 8 caracteres" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="pl-10 pr-10" minLength={8} required />
-                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Função</Label>
-                    <Select value={newRole} onValueChange={setNewRole}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="assistente">Assistente</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {newRole === "admin" && (
-                      <p className="text-xs text-amber-500 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Acesso total ao sistema.</p>
-                    )}
-                  </div>
+                  </fieldset>
                   <Button type="submit" className="w-full" disabled={creating}>{creating ? "Criando..." : "Criar Usuário"}</Button>
                 </form>
               </DialogContent>
@@ -336,7 +330,7 @@ export default function ControlCenter() {
                 <Select value={editRole} onValueChange={setEditRole}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="admin">Administrador</SelectItem>
                     <SelectItem value="assistente">Assistente</SelectItem>
                   </SelectContent>
                 </Select>
@@ -384,35 +378,6 @@ export default function ControlCenter() {
             </div>
           </DialogContent>
         </Dialog>
-
-        {/* Audit Logs */}
-        <Card className="glass-card">
-          <CardHeader><CardTitle className="text-base font-medium">Logs de Auditoria</CardTitle></CardHeader>
-          <CardContent>
-            {!auditLogs?.length ? (
-              <p className="text-sm text-muted-foreground text-center py-8">Nenhum log registrado ainda</p>
-            ) : (
-              <div className="space-y-1">
-                {auditLogs.map(log => (
-                  <div key={log.id} className="flex items-start gap-3 py-3 border-b border-border/30 last:border-0">
-                    <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium capitalize">{log.action}</span> em <span className="text-primary">{log.table_name}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {new Date(log.created_at).toLocaleString("pt-BR")}
-                        {log.ip_address && ` · IP: ${log.ip_address}`}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
     </DashboardLayout>
   );
