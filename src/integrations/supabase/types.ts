@@ -14,6 +14,80 @@ export type Database = {
   }
   public: {
     Tables: {
+      amortizacoes: {
+        Row: {
+          banco_id: string | null
+          contrato_id: string
+          created_at: string
+          data_pagamento: string
+          efeito: string | null
+          id: string
+          observacoes: string | null
+          parcelas_antecipadas: number | null
+          tipo: string
+          transacao_id: string | null
+          user_id: string
+          valor: number
+        }
+        Insert: {
+          banco_id?: string | null
+          contrato_id: string
+          created_at?: string
+          data_pagamento: string
+          efeito?: string | null
+          id?: string
+          observacoes?: string | null
+          parcelas_antecipadas?: number | null
+          tipo: string
+          transacao_id?: string | null
+          user_id: string
+          valor: number
+        }
+        Update: {
+          banco_id?: string | null
+          contrato_id?: string
+          created_at?: string
+          data_pagamento?: string
+          efeito?: string | null
+          id?: string
+          observacoes?: string | null
+          parcelas_antecipadas?: number | null
+          tipo?: string
+          transacao_id?: string | null
+          user_id?: string
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "amortizacoes_banco_id_fkey"
+            columns: ["banco_id"]
+            isOneToOne: false
+            referencedRelation: "bancos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "amortizacoes_contrato_id_fkey"
+            columns: ["contrato_id"]
+            isOneToOne: false
+            referencedRelation: "contratos_divida"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "amortizacoes_contrato_id_fkey"
+            columns: ["contrato_id"]
+            isOneToOne: false
+            referencedRelation: "contratos_divida_resumo"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "amortizacoes_transacao_id_fkey"
+            columns: ["transacao_id"]
+            isOneToOne: false
+            referencedRelation: "transacoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -220,6 +294,106 @@ export type Database = {
           },
         ]
       }
+      contratos_divida: {
+        Row: {
+          banco_id: string | null
+          cartao_id: string | null
+          categoria_id: string | null
+          created_at: string
+          credor: string | null
+          data_contrato: string
+          data_primeira_parcela: string
+          data_quitacao: string | null
+          deleted_at: string | null
+          descricao: string
+          dia_vencimento: number
+          id: string
+          observacoes: string | null
+          origem: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas: number
+          status: string
+          subcategoria: string | null
+          taxa_juros_mensal: number | null
+          total_parcelas: number
+          updated_at: string
+          user_id: string
+          valor_parcela: number
+          valor_total: number
+        }
+        Insert: {
+          banco_id?: string | null
+          cartao_id?: string | null
+          categoria_id?: string | null
+          created_at?: string
+          credor?: string | null
+          data_contrato: string
+          data_primeira_parcela: string
+          data_quitacao?: string | null
+          deleted_at?: string | null
+          descricao: string
+          dia_vencimento: number
+          id?: string
+          observacoes?: string | null
+          origem?: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas?: number
+          status?: string
+          subcategoria?: string | null
+          taxa_juros_mensal?: number | null
+          total_parcelas: number
+          updated_at?: string
+          user_id: string
+          valor_parcela: number
+          valor_total: number
+        }
+        Update: {
+          banco_id?: string | null
+          cartao_id?: string | null
+          categoria_id?: string | null
+          created_at?: string
+          credor?: string | null
+          data_contrato?: string
+          data_primeira_parcela?: string
+          data_quitacao?: string | null
+          deleted_at?: string | null
+          descricao?: string
+          dia_vencimento?: number
+          id?: string
+          observacoes?: string | null
+          origem?: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas?: number
+          status?: string
+          subcategoria?: string | null
+          taxa_juros_mensal?: number | null
+          total_parcelas?: number
+          updated_at?: string
+          user_id?: string
+          valor_parcela?: number
+          valor_total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contratos_divida_banco_id_fkey"
+            columns: ["banco_id"]
+            isOneToOne: false
+            referencedRelation: "bancos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contratos_divida_cartao_id_fkey"
+            columns: ["cartao_id"]
+            isOneToOne: false
+            referencedRelation: "cartoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contratos_divida_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       convites: {
         Row: {
           created_at: string
@@ -286,6 +460,75 @@ export type Database = {
           notas?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      lembretes: {
+        Row: {
+          confirmado: boolean
+          confirmado_at: string | null
+          created_at: string
+          data_lembrete: string | null
+          descricao: string | null
+          id: string
+          notificado_telegram: boolean
+          titulo: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          confirmado?: boolean
+          confirmado_at?: string | null
+          created_at?: string
+          data_lembrete?: string | null
+          descricao?: string | null
+          id?: string
+          notificado_telegram?: boolean
+          titulo: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          confirmado?: boolean
+          confirmado_at?: string | null
+          created_at?: string
+          data_lembrete?: string | null
+          descricao?: string | null
+          id?: string
+          notificado_telegram?: boolean
+          titulo?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      marketing_mensal: {
+        Row: {
+          ano: number
+          created_at: string | null
+          id: string
+          mes: number
+          observacoes: string | null
+          user_id: string
+          valor_total: number
+        }
+        Insert: {
+          ano: number
+          created_at?: string | null
+          id?: string
+          mes: number
+          observacoes?: string | null
+          user_id: string
+          valor_total?: number
+        }
+        Update: {
+          ano?: number
+          created_at?: string | null
+          id?: string
+          mes?: number
+          observacoes?: string | null
+          user_id?: string
+          valor_total?: number
         }
         Relationships: []
       }
@@ -384,12 +627,17 @@ export type Database = {
           cartao_id: string | null
           categoria_id: string | null
           created_at: string
+          data_fim: string | null
+          data_inicio: string | null
           dia_vencimento_padrao: number
+          eh_divida: boolean | null
           eh_variavel: boolean
           id: string
           instrucoes_coleta: string | null
           nome: string
           origem: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas: number | null
+          parcelas_total: number | null
           subcategoria: string | null
           updated_at: string
           url_site_login: string | null
@@ -402,12 +650,17 @@ export type Database = {
           cartao_id?: string | null
           categoria_id?: string | null
           created_at?: string
+          data_fim?: string | null
+          data_inicio?: string | null
           dia_vencimento_padrao: number
+          eh_divida?: boolean | null
           eh_variavel?: boolean
           id?: string
           instrucoes_coleta?: string | null
           nome: string
           origem?: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas?: number | null
+          parcelas_total?: number | null
           subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
@@ -420,12 +673,17 @@ export type Database = {
           cartao_id?: string | null
           categoria_id?: string | null
           created_at?: string
+          data_fim?: string | null
+          data_inicio?: string | null
           dia_vencimento_padrao?: number
+          eh_divida?: boolean | null
           eh_variavel?: boolean
           id?: string
           instrucoes_coleta?: string | null
           nome?: string
           origem?: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas?: number | null
+          parcelas_total?: number | null
           subcategoria?: string | null
           updated_at?: string
           url_site_login?: string | null
@@ -542,6 +800,7 @@ export type Database = {
           cartao_id: string | null
           categoria_id: string | null
           categoria_tipo: Database["public"]["Enums"]["categoria_tipo"]
+          contrato_id: string | null
           created_at: string
           data_pagamento: string | null
           data_vencimento: string
@@ -568,6 +827,7 @@ export type Database = {
           cartao_id?: string | null
           categoria_id?: string | null
           categoria_tipo: Database["public"]["Enums"]["categoria_tipo"]
+          contrato_id?: string | null
           created_at?: string
           data_pagamento?: string | null
           data_vencimento: string
@@ -594,6 +854,7 @@ export type Database = {
           cartao_id?: string | null
           categoria_id?: string | null
           categoria_tipo?: Database["public"]["Enums"]["categoria_tipo"]
+          contrato_id?: string | null
           created_at?: string
           data_pagamento?: string | null
           data_vencimento?: string
@@ -638,6 +899,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "transacoes_contrato_id_fkey"
+            columns: ["contrato_id"]
+            isOneToOne: false
+            referencedRelation: "contratos_divida"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transacoes_contrato_id_fkey"
+            columns: ["contrato_id"]
+            isOneToOne: false
+            referencedRelation: "contratos_divida_resumo"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "transacoes_recorrencia_id_fkey"
             columns: ["recorrencia_id"]
             isOneToOne: false
@@ -666,7 +941,57 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      contratos_divida_resumo: {
+        Row: {
+          banco_id: string | null
+          cartao_id: string | null
+          categoria_id: string | null
+          created_at: string | null
+          credor: string | null
+          data_contrato: string | null
+          data_primeira_parcela: string | null
+          descricao: string | null
+          dia_vencimento: number | null
+          id: string | null
+          observacoes: string | null
+          origem: Database["public"]["Enums"]["origem_conta"] | null
+          parcelas_pagas: number | null
+          parcelas_restantes: number | null
+          percentual_pago: number | null
+          saldo_devedor_estimado: number | null
+          status: string | null
+          subcategoria: string | null
+          total_amortizado: number | null
+          total_parcelas: number | null
+          updated_at: string | null
+          user_id: string | null
+          valor_parcela: number | null
+          valor_total: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contratos_divida_banco_id_fkey"
+            columns: ["banco_id"]
+            isOneToOne: false
+            referencedRelation: "bancos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contratos_divida_cartao_id_fkey"
+            columns: ["cartao_id"]
+            isOneToOne: false
+            referencedRelation: "cartoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contratos_divida_categoria_id_fkey"
+            columns: ["categoria_id"]
+            isOneToOne: false
+            referencedRelation: "categorias"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       get_user_role: {
