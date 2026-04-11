@@ -116,7 +116,10 @@ export async function processMessage(
 
     const downloaded = await downloadTelegramFile(fileId, lovableKey, telegramKey);
     if (downloaded) {
-      const storagePath = `${userId}/${new Date().toISOString().split("T")[0]}_${fileName}`;
+      // FIX #3: Standardize path to userId/transacaoId/timestamp.ext (pending tx link)
+      // For orphan files, use userId/orphan/timestamp.ext temporarily
+      const ext = fileName.split(".").pop() || "jpg";
+      const storagePath = `${userId}/orphan/${Date.now()}.${ext}`;
       const { error: uploadErr } = await supabase.storage
         .from("comprovantes")
         .upload(storagePath, downloaded.bytes, {
@@ -128,15 +131,36 @@ export async function processMessage(
 
     if (!processedText && fileUrl) {
       if (pendingContext?.last_transaction_id) {
+        // Re-upload to correct path: userId/transacaoId/timestamp.ext
+        const txId = pendingContext.last_transaction_id;
+        const ext = fileName.split(".").pop() || "jpg";
+        const correctPath = `${userId}/${txId}/${Date.now()}.${ext}`;
+
+        // Move file: download from orphan path, upload to correct path
+        const { data: fileData } = await supabase.storage.from("comprovantes").download(fileUrl);
+        if (fileData) {
+          const bytes = new Uint8Array(await fileData.arrayBuffer());
+          await supabase.storage.from("comprovantes").upload(correctPath, bytes, {
+            contentType: message.document?.mime_type || "image/jpeg",
+            upsert: true,
+          });
+          await supabase.storage.from("comprovantes").remove([fileUrl]);
+          fileUrl = correctPath;
+        }
+
         await supabase.from("comprovantes").insert({
-          transacao_id: pendingContext.last_transaction_id,
+          transacao_id: txId,
           file_path: fileUrl,
           file_name: fileName!,
           file_type: message.document?.mime_type || "image/jpeg",
           uploaded_by: userId,
         });
         await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
-        const { data: linkedTx } = await supabase.from("transacoes").select("descricao, valor, data_vencimento").eq("id", pendingContext.last_transaction_id).single();
+
+        // FIX #6: Trigger drive-mirror
+        await triggerDriveMirror(supabase, txId, fileUrl, fileName!);
+
+        const { data: linkedTx } = await supabase.from("transacoes").select("descricao, valor, data_vencimento").eq("id", txId).single();
         const dtStr = linkedTx ? (() => { const [y,m,d] = linkedTx.data_vencimento.split("-"); return `${d}/${m}/${y}`; })() : "";
         await sendTelegram(chatId, `📎 Comprovante vinculado à conta:\n${linkedTx?.descricao || "?"} - R$ ${Number(linkedTx?.valor || 0).toFixed(2)} (${dtStr})`, lovableKey, telegramKey);
         return jsonResponse({ ok: true });
@@ -179,8 +203,8 @@ export async function processMessage(
   // 2. Check for known vendor (canonical rules)
   const vendorCanonical = detectVendorCanonical(processedText);
 
-  // 3. Check recurrence in DB
-  const descForRecurrence = vendorCanonical?.canonical || processedText.substring(0, 50);
+  // 3. Check recurrence in DB — FIX #9: use shorter, cleaner search term
+  const descForRecurrence = vendorCanonical?.canonical || extractCleanDescription(processedText);
   const recurrence = await resolveRecurrence(supabase, userId, descForRecurrence);
 
   // 4. Check vendor alias in agent memory
@@ -206,7 +230,7 @@ export async function processMessage(
       data_vencimento: localDate || extraction.data_vencimento || null,
       missing_question: extraction.missing_question,
     };
-    await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+    await savePendingContext(supabase, chatId, update, contextToStore);
     await sendTelegram(chatId, `📝 ${contextToStore.descricao || "?"}\n\n❓ ${extraction.missing_question}`, lovableKey, telegramKey);
     return jsonResponse({ ok: true, incomplete: true });
   }
@@ -373,16 +397,12 @@ async function enterConversationalFlow(
   const missing: string[] = [];
   if (!ctx.status_pagamento) missing.push("status");
   if (!ctx.cartao_id_resolved && !ctx.banco_id_resolved && !ctx.origem) missing.push("pagamento");
-  if (!ctx.categoria_ref) missing.push("categoria");
+  if (!ctx.categoria_ref && !ctx.categoria_id_resolved) missing.push("categoria");
 
   if (missing.length === 0) {
     ctx.step = "confirm";
-    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
-    if (!update?.update_id) {
-      await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
-    } else {
-      await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("update_id", update.update_id);
-    }
+    // FIX #2: Use savePendingContext with chat_id fallback
+    await savePendingContext(supabase, chatId, update, ctx);
     const msg = contextToConfirmationMessage(ctx);
     await sendTelegram(chatId, msg, lovableKey, telegramKey);
     return jsonResponse({ ok: true });
@@ -470,9 +490,8 @@ async function handlePendingContext(
     }
     if (/boleto/i.test(lower)) {
       ctx.origem = "boleto";
-    } else if (/d[eé]bito/i.test(lower)) {
-      await sendTelegram(chatId, "Poderia especificar? A despesa foi no 💳 Cartão, via PIX, em 💵 Dinheiro ou Boleto?", lovableKey, telegramKey);
-      return jsonResponse({ ok: true });
+    } else if (/d[eé]bito\s*autom/i.test(lower)) {
+      ctx.origem = "debito_automatico";
     } else if (/dinheiro/i.test(lower)) {
       ctx.origem = "dinheiro";
     } else {
@@ -489,7 +508,8 @@ async function handlePendingContext(
           ctx.banco_id_resolved = matchBank.id;
           ctx.banco_display = matchBank.nome;
         } else {
-          ctx.origem = lower as any;
+          await sendTelegram(chatId, "Poderia especificar? A despesa foi no 💳 Cartão, via PIX, em 💵 Dinheiro ou Boleto?", lovableKey, telegramKey);
+          return jsonResponse({ ok: true });
         }
       }
     }
@@ -557,10 +577,11 @@ async function handlePendingContext(
 
   if (step === "confirm") {
     const lower = removeAccents(processedText.toLowerCase().trim());
-    if (/sim|ok|isso|pode|confirma|certo|correto/i.test(lower)) {
+    // FIX #12: Stricter confirmation regex using word boundaries
+    if (/^(sim|ok|isso|confirma|certo|correto|s)$/i.test(lower) || /^pode\s*(sim|registrar|salvar)?$/i.test(lower)) {
       return await finalizeTransaction(chatId, userId, ctx, fileUrl, fileName, update, supabase, lovableKey, telegramKey);
     }
-    if (/n[aã]o|errado|cancela/i.test(lower)) {
+    if (/^(n[aã]o|errado|cancela|n)$/i.test(lower)) {
       await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
       await sendTelegram(chatId, "❌ Cancelado. Envie os dados novamente.", lovableKey, telegramKey);
       return jsonResponse({ ok: true });
@@ -568,6 +589,64 @@ async function handlePendingContext(
     const msg = contextToConfirmationMessage(ctx);
     await sendTelegram(chatId, msg, lovableKey, telegramKey);
     return jsonResponse({ ok: true });
+  }
+
+  // FIX #4: Handle lembretes confirmation
+  if (step === "lembretes_listados") {
+    const lembretes = (ctx as any).lembretes_list || [];
+    const num = parseInt(processedText.trim());
+    if (!isNaN(num) && num >= 1 && num <= lembretes.length) {
+      const lembrete = lembretes[num - 1];
+      const { error } = await supabase.from("lembretes").update({
+        confirmado: true,
+        confirmado_at: new Date().toISOString(),
+      }).eq("id", lembrete.id);
+      if (!error) {
+        await sendTelegram(chatId, `✅ Lembrete "${lembrete.titulo}" confirmado!`, lovableKey, telegramKey);
+      } else {
+        await sendTelegram(chatId, `❌ Erro ao confirmar: ${error.message}`, lovableKey, telegramKey);
+      }
+    } else {
+      await sendTelegram(chatId, "❓ Responda com o número do lembrete para confirmar, ou envie uma nova mensagem.", lovableKey, telegramKey);
+    }
+    await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+    return jsonResponse({ ok: true });
+  }
+
+  // FIX #7: Handle debt creation flow
+  if (step === "ask_debt_parcelas") {
+    const totalParcelas = parseInt(processedText.trim());
+    if (isNaN(totalParcelas) || totalParcelas < 1) {
+      await sendTelegram(chatId, "❓ Informe um número válido de parcelas.", lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
+    }
+    (ctx as any).total_parcelas = totalParcelas;
+    ctx.step = "ask_debt_parcelas_pagas" as any;
+    await savePendingContext(supabase, chatId, update, ctx);
+    await sendTelegram(chatId, `📝 ${totalParcelas} parcelas. Quantas já foram pagas?`, lovableKey, telegramKey);
+    return jsonResponse({ ok: true });
+  }
+
+  if (step === "ask_debt_parcelas_pagas") {
+    const parcelasPagas = parseInt(processedText.trim());
+    if (isNaN(parcelasPagas) || parcelasPagas < 0) {
+      await sendTelegram(chatId, "❓ Informe um número válido (0 ou mais).", lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
+    }
+    (ctx as any).parcelas_pagas = parcelasPagas;
+    ctx.step = "ask_debt_dia_vencimento" as any;
+    await savePendingContext(supabase, chatId, update, ctx);
+    await sendTelegram(chatId, `📝 ${parcelasPagas} pagas. Qual o dia do vencimento mensal?`, lovableKey, telegramKey);
+    return jsonResponse({ ok: true });
+  }
+
+  if (step === "ask_debt_dia_vencimento") {
+    const diaVenc = parseInt(processedText.trim());
+    if (isNaN(diaVenc) || diaVenc < 1 || diaVenc > 31) {
+      await sendTelegram(chatId, "❓ Informe um dia válido (1-31).", lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
+    }
+    return await finalizeDebt(chatId, userId, ctx, diaVenc, update, supabase, lovableKey, telegramKey);
   }
 
   // Legacy extraction step
@@ -606,7 +685,7 @@ async function handlePendingContext(
         data_vencimento: extraction.data_vencimento || pendingContext.data_vencimento,
         missing_question: extraction.missing_question,
       };
-      await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+      await savePendingContext(supabase, chatId, update, contextToStore);
       await sendTelegram(chatId, `📝 ${contextToStore.descricao || "?"} - R$ ${contextToStore.valor || "?"}\n\n❓ ${extraction.missing_question}`, lovableKey, telegramKey);
       return jsonResponse({ ok: true, incomplete: true });
     }
@@ -688,19 +767,34 @@ async function finalizeTransaction(
   }
 
   // Store last transaction ID for receipt linking
-  await supabase.from("telegram_messages").update({
-    pending_context: { last_transaction_id: newTx.id },
-  }).eq("chat_id", chatId).not("pending_context", "is", null);
+  await savePendingContext(supabase, chatId, update, { last_transaction_id: newTx.id });
 
   // Link file if present
   if (fileUrl && newTx) {
-    await supabase.from("comprovantes").insert({
-      transacao_id: newTx.id,
-      file_path: fileUrl,
-      file_name: fileName!,
-      file_type: "image/jpeg",
-      uploaded_by: userId,
-    });
+    // Re-upload to correct path: userId/transacaoId/timestamp.ext
+    const ext = (fileName || "jpg").split(".").pop() || "jpg";
+    const correctPath = `${userId}/${newTx.id}/${Date.now()}.${ext}`;
+
+    const { data: fileData } = await supabase.storage.from("comprovantes").download(fileUrl);
+    if (fileData) {
+      const bytes = new Uint8Array(await fileData.arrayBuffer());
+      await supabase.storage.from("comprovantes").upload(correctPath, bytes, {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+      await supabase.storage.from("comprovantes").remove([fileUrl]);
+
+      await supabase.from("comprovantes").insert({
+        transacao_id: newTx.id,
+        file_path: correctPath,
+        file_name: fileName!,
+        file_type: "image/jpeg",
+        uploaded_by: userId,
+      });
+
+      // FIX #6: Trigger drive-mirror
+      await triggerDriveMirror(supabase, newTx.id, correctPath, fileName!);
+    }
   }
 
   // PIX: deduct bank balance
@@ -730,6 +824,102 @@ async function finalizeTransaction(
   const response = contextToSuccessMessage(ctx, !!fileUrl);
   await sendTelegram(chatId, response, lovableKey, telegramKey);
   return jsonResponse({ ok: true, transaction_id: newTx.id });
+}
+
+// ═══════════════ FINALIZE DEBT ═══════════════
+// FIX #7: Full debt creation flow
+
+async function finalizeDebt(
+  chatId: number,
+  userId: string,
+  ctx: any,
+  diaVencimento: number,
+  update: any,
+  supabase: any,
+  lovableKey: string,
+  telegramKey: string
+): Promise<Response> {
+  const totalParcelas = ctx.total_parcelas || 1;
+  const parcelasPagas = ctx.parcelas_pagas || 0;
+  const valorParcela = ctx.valor || 0;
+  const valorTotal = valorParcela * totalParcelas;
+  const today = new Date();
+  const dataPrimeiraParcela = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(diaVencimento).padStart(2, "0")}`;
+
+  // Resolve categoria
+  let categoriaId: string | null = null;
+  if (ctx.categoria_ref) {
+    const cat = await resolveCategory(supabase, userId, ctx.categoria_ref);
+    if (cat) categoriaId = cat.id;
+  }
+
+  // Resolve banco/cartao
+  let bancoId: string | null = ctx.banco_id_resolved || null;
+  let cartaoId: string | null = ctx.cartao_id_resolved || null;
+  if (ctx.banco_ref && !bancoId) {
+    const bank = await resolveBank(supabase, userId, ctx.banco_ref);
+    if (bank) bancoId = bank.id;
+  }
+
+  const { data: contrato, error: contratoErr } = await supabase.from("contratos_divida").insert({
+    user_id: userId,
+    descricao: ctx.descricao || "Dívida",
+    valor_total: valorTotal,
+    valor_parcela: valorParcela,
+    total_parcelas: totalParcelas,
+    parcelas_pagas: parcelasPagas,
+    dia_vencimento: diaVencimento,
+    data_contrato: today.toISOString().split("T")[0],
+    data_primeira_parcela: dataPrimeiraParcela,
+    status: parcelasPagas >= totalParcelas ? "quitado" : "ativo",
+    categoria_id: categoriaId,
+    banco_id: bancoId,
+    cartao_id: cartaoId,
+    origem: ctx.origem || null,
+    subcategoria: ctx.subcategoria || null,
+  }).select("id").single();
+
+  if (contratoErr) {
+    await sendTelegram(chatId, `❌ Erro ao criar dívida: ${contratoErr.message}`, lovableKey, telegramKey);
+    return jsonResponse({ ok: false, error: contratoErr.message });
+  }
+
+  // Create transaction entries for each installment
+  const parcelas: any[] = [];
+  for (let i = 0; i < totalParcelas; i++) {
+    const parcelaDate = new Date(today.getFullYear(), today.getMonth() + i, diaVencimento);
+    parcelas.push({
+      user_id: userId,
+      descricao: `${ctx.descricao} (${i + 1}/${totalParcelas})`,
+      valor: valorParcela,
+      data_vencimento: parcelaDate.toISOString().split("T")[0],
+      status: i < parcelasPagas ? "pago" : "pendente",
+      data_pagamento: i < parcelasPagas ? parcelaDate.toISOString().split("T")[0] : null,
+      categoria_tipo: "divida",
+      categoria_id: categoriaId,
+      banco_id: bancoId,
+      cartao_id: cartaoId,
+      origem: ctx.origem || null,
+      contrato_id: contrato.id,
+      parcela_atual: i + 1,
+      parcela_total: totalParcelas,
+      subcategoria: ctx.subcategoria || null,
+    });
+  }
+
+  const { error: parcelasErr } = await supabase.from("transacoes").insert(parcelas);
+  if (parcelasErr) {
+    console.error("Error creating installments:", parcelasErr);
+  }
+
+  await supabase.from("telegram_messages").update({ pending_context: null }).eq("chat_id", chatId).not("pending_context", "is", null);
+
+  const restantes = totalParcelas - parcelasPagas;
+  await sendTelegram(chatId,
+    `✅ Dívida registrada!\n\n📋 ${ctx.descricao}\n💰 R$ ${valorParcela.toFixed(2)} x ${totalParcelas} = R$ ${valorTotal.toFixed(2)}\n📊 ${parcelasPagas} pagas | ${restantes} restantes\n📅 Vencimento: dia ${diaVencimento}`,
+    lovableKey, telegramKey);
+
+  return jsonResponse({ ok: true, contrato_id: contrato.id });
 }
 
 // ═══════════════ ORPHAN FILE HANDLER ═══════════════
@@ -765,11 +955,29 @@ async function handleOrphanFile(
   }
 
   const target = withoutComp[0];
+
+  // Move file to correct path
+  const ext = fileName.split(".").pop() || "jpg";
+  const correctPath = `${userId}/${target.id}/${Date.now()}.${ext}`;
+  const { data: fileData } = await supabase.storage.from("comprovantes").download(fileUrl);
+  if (fileData) {
+    const bytes = new Uint8Array(await fileData.arrayBuffer());
+    await supabase.storage.from("comprovantes").upload(correctPath, bytes, {
+      contentType: fileName.endsWith(".pdf") ? "application/pdf" : "image/jpeg",
+      upsert: true,
+    });
+    await supabase.storage.from("comprovantes").remove([fileUrl]);
+  }
+
   await supabase.from("comprovantes").insert({
-    transacao_id: target.id, file_path: fileUrl, file_name: fileName,
+    transacao_id: target.id, file_path: correctPath, file_name: fileName,
     file_type: fileName.endsWith(".pdf") ? "application/pdf" : "image/jpeg",
     uploaded_by: userId,
   });
+
+  // Trigger drive-mirror
+  await triggerDriveMirror(supabase, target.id, correctPath, fileName);
+
   const [y, m, d] = target.data_vencimento.split("-");
   await sendTelegram(chatId, `📎 Comprovante vinculado a: ${target.descricao} - R$ ${Number(target.valor).toFixed(2)} (${d}/${m}/${y})`, lovableKey, telegramKey);
   return jsonResponse({ ok: true });
@@ -777,15 +985,84 @@ async function handleOrphanFile(
 
 // ═══════════════ HELPERS ═══════════════
 
+// FIX #2: Robust pending context save with chat_id fallback
 async function savePendingContext(
   supabase: any,
   chatId: number,
   update: any,
   ctx: any
 ): Promise<void> {
+  // Try update_id first (most precise)
   if (update?.update_id) {
-    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("update_id", update.update_id);
-  } else {
-    await supabase.from("telegram_messages").update({ pending_context: ctx }).eq("chat_id", chatId).not("pending_context", "is", null);
+    const { count } = await supabase
+      .from("telegram_messages")
+      .update({ pending_context: ctx })
+      .eq("update_id", update.update_id)
+      .select("id", { count: "exact", head: true });
+
+    // If update_id matched, we're done
+    if (count && count > 0) return;
+  }
+
+  // Fallback: update latest message for this chat_id
+  const { data: latest } = await supabase
+    .from("telegram_messages")
+    .select("id")
+    .eq("chat_id", chatId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (latest) {
+    await supabase
+      .from("telegram_messages")
+      .update({ pending_context: ctx })
+      .eq("id", latest.id);
+  }
+}
+
+// FIX #9: Extract a clean, short description for recurrence matching
+function extractCleanDescription(text: string): string {
+  // Remove common filler words and financial terms
+  const cleaned = text
+    .replace(/paguei|pago|paga|pagamento|conta|vence|vencimento|reais|hoje|ontem|dia\s+\d+/gi, "")
+    .replace(/R\$\s*[\d.,]+/g, "")
+    .replace(/final\s*\d{4}/gi, "")
+    .replace(/cart[aã]o|banco|pix|boleto|dinheiro/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Take first meaningful word(s), max 30 chars
+  const words = cleaned.split(" ").filter(w => w.length > 2);
+  return words.slice(0, 3).join(" ").substring(0, 30) || text.substring(0, 20);
+}
+
+// FIX #6: Trigger drive-mirror edge function
+async function triggerDriveMirror(
+  supabase: any,
+  transacaoId: string,
+  filePath: string,
+  fileName: string,
+  docType: string = "comprovante"
+): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) return;
+
+    await fetch(`${supabaseUrl}/functions/v1/drive-mirror`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        transacao_id: transacaoId,
+        file_path: filePath,
+        file_name: fileName,
+        doc_type: docType,
+      }),
+    }).catch(err => console.error("Drive mirror trigger error:", err));
+  } catch (err) {
+    console.error("Drive mirror trigger error:", err);
   }
 }

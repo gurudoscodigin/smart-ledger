@@ -25,6 +25,7 @@ export function useComprovantes(transacaoId?: string) {
   const upload = useMutation({
     mutationFn: async ({ transacaoId, file }: { transacaoId: string; file: File }) => {
       const ext = file.name.split(".").pop();
+      // Standardized path: userId/transacaoId/timestamp.ext
       const path = `${user!.id}/${transacaoId}/${Date.now()}.${ext}`;
 
       const { error: uploadErr } = await supabase.storage
@@ -42,6 +43,30 @@ export function useComprovantes(transacaoId?: string) {
           uploaded_by: user!.id,
         });
       if (dbErr) throw dbErr;
+
+      // FIX #6: Trigger drive-mirror asynchronously
+      try {
+        const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+        if (projectId) {
+          const { data: session } = await supabase.auth.getSession();
+          const token = session?.session?.access_token;
+          fetch(`https://${projectId}.supabase.co/functions/v1/drive-mirror`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              transacao_id: transacaoId,
+              file_path: path,
+              file_name: file.name,
+              doc_type: "comprovante",
+            }),
+          }).catch(err => console.error("Drive mirror trigger error:", err));
+        }
+      } catch (e) {
+        console.error("Drive mirror trigger error:", e);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["comprovantes"] });

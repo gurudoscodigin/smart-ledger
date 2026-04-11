@@ -223,6 +223,7 @@ export async function resolveBank(
   return data;
 }
 
+// FIX #9: Improved recurrence matching — use word-level matching instead of raw substring
 export async function resolveRecurrence(
   supabase: any, userId: string, description: string
 ): Promise<{
@@ -231,17 +232,41 @@ export async function resolveRecurrence(
   origem: string | null; eh_variavel: boolean;
   subcategoria: string | null; valor_estimado: number;
 } | null> {
-  const { data } = await supabase
-    .from("recorrencias_fixas")
-    .select("id, nome, categoria_id, cartao_id, banco_id, origem, eh_variavel, subcategoria, valor_estimado")
-    .eq("user_id", userId)
-    .eq("ativo", true)
-    .ilike("nome", `%${description}%`)
-    .limit(1)
-    .maybeSingle();
-  return data;
+  // Extract meaningful words (3+ chars) for matching
+  const words = description
+    .split(/\s+/)
+    .filter(w => w.length >= 3)
+    .map(w => w.toLowerCase());
+
+  if (words.length === 0) return null;
+
+  // Try each word individually, prefer longer matches
+  for (const word of words) {
+    const { data } = await supabase
+      .from("recorrencias_fixas")
+      .select("id, nome, categoria_id, cartao_id, banco_id, origem, eh_variavel, subcategoria, valor_estimado")
+      .eq("user_id", userId)
+      .eq("ativo", true)
+      .ilike("nome", `%${word}%`)
+      .limit(3);
+
+    if (data && data.length === 1) {
+      return data[0]; // Unique match — confident
+    }
+    if (data && data.length > 1) {
+      // Multiple matches — try to narrow down with additional words
+      const bestMatch = data.find((r: any) =>
+        words.every(w => r.nome.toLowerCase().includes(w))
+      );
+      if (bestMatch) return bestMatch;
+      // Return first if no exact multi-word match
+      return data[0];
+    }
+  }
+  return null;
 }
 
+// FIX #10: Add .limit(100) to vendor alias query
 export async function resolveVendorAlias(
   supabase: any, userId: string, text: string
 ): Promise<{
@@ -260,7 +285,8 @@ export async function resolveVendorAlias(
     .from("agent_vendor_aliases")
     .select("*")
     .eq("user_id", userId)
-    .order("confidence", { ascending: false });
+    .order("confidence", { ascending: false })
+    .limit(100);
 
   if (!data) return null;
 

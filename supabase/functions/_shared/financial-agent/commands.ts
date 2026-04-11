@@ -7,7 +7,7 @@ import { extractCardData, extractRecurrenceData, extractTransactionData } from "
 import {
   classifyByKeywords, extractValue, extractDate, detectStatus,
   extractCardRef, extractBankRef, resolveBank, resolveCard,
-  resolveCategory, getUserCategories,
+  resolveCategory, resolveRecurrence, getUserCategories,
 } from "./services.ts";
 import type { AgentContext } from "./types.ts";
 
@@ -21,7 +21,6 @@ export async function handleCommand(
   lovableKey: string,
   telegramKey: string,
   openaiKey: string,
-  // Callback to enter the conversational flow
   enterFlow: (ctx: AgentContext, chatId: number, userId: string, update: any) => Promise<Response>
 ): Promise<Response> {
   const [cmd, ...args] = text.split(" ");
@@ -149,6 +148,7 @@ export async function handleCommand(
       break;
     }
 
+    // FIX #8: /nova_conta now detects recurrence and adjusts categoria_tipo
     case "/nova_conta": {
       if (!argStr) { await sendTelegram(chatId, "Use: /nova_conta [dados]\nOu escreva em linguagem natural!", lovableKey, telegramKey); break; }
       const kwClass = classifyByKeywords(argStr);
@@ -157,6 +157,26 @@ export async function handleCommand(
       const localSt = detectStatus(argStr);
       const txExtraction = await extractTransactionData(argStr, userId, supabase, openaiKey);
       if (!txExtraction || txExtraction.status === "not_financial") { await sendTelegram(chatId, "❌ Não entendi. Tente novamente.", lovableKey, telegramKey); break; }
+
+      // Check recurrence to detect tipo
+      const descForRec = txExtraction.descricao || argStr.substring(0, 30);
+      const recurrence = await resolveRecurrence(supabase, userId, descForRec);
+      let categoriaTipo: "fixa" | "avulsa" | "variavel" | "divida" = "avulsa";
+      let recorrenciaId: string | null = null;
+      let isRecurrent = false;
+      let isVariable = false;
+
+      if (recurrence) {
+        recorrenciaId = recurrence.id;
+        isRecurrent = true;
+        isVariable = recurrence.eh_variavel;
+        categoriaTipo = recurrence.eh_variavel ? "variavel" : "fixa";
+      }
+
+      // Check for debt keywords
+      if (/divida|financiamento|emprestimo|parcela/i.test(argStr)) {
+        categoriaTipo = "divida";
+      }
 
       const ctx: AgentContext = {
         step: "ask_status",
@@ -170,33 +190,76 @@ export async function handleCommand(
         origem: (txExtraction.origem as any) || null,
         cartao_ref: extractCardRef(argStr) || txExtraction.cartao_ref || null,
         banco_ref: extractBankRef(argStr) || txExtraction.banco_ref || null,
-        categoria_id_resolved: null,
-        cartao_id_resolved: null,
+        categoria_id_resolved: recurrence?.categoria_id || null,
+        cartao_id_resolved: recurrence?.cartao_id || null,
         cartao_display: null,
-        banco_id_resolved: null,
+        banco_id_resolved: recurrence?.banco_id || null,
         banco_display: null,
-        recorrencia_id: null,
+        recorrencia_id: recorrenciaId,
         contrato_id: null,
         parcela_atual: null,
         parcela_total: null,
-        categoria_tipo: "avulsa",
-        is_recurrent: false,
-        is_variable_amount: false,
+        categoria_tipo: categoriaTipo,
+        is_recurrent: isRecurrent,
+        is_variable_amount: isVariable,
       };
 
-      if (ctx.categoria_ref) {
+      if (ctx.categoria_ref && !ctx.categoria_id_resolved) {
         const cat = await resolveCategory(supabase, userId, ctx.categoria_ref);
         if (cat) ctx.categoria_id_resolved = cat.id;
       }
 
       if (!ctx.valor) {
         const contextToStore = { step: "extraction" as const, descricao: ctx.descricao, missing_question: "Qual o valor?" };
-        await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+        // Use savePendingContext via enterFlow fallback
+        await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("chat_id", chatId).not("pending_context", "is", null);
+        // Also try update_id
+        if (update?.update_id) {
+          await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+        }
         await sendTelegram(chatId, `📝 ${ctx.descricao}\n\n❓ Qual o valor?`, lovableKey, telegramKey);
         break;
       }
 
       return await enterFlow(ctx, chatId, userId, update);
+    }
+
+    // FIX #7: New command for debt creation
+    case "/nova_divida": {
+      if (!argStr) {
+        await sendTelegram(chatId, "Use: /nova_divida [descrição] [valor da parcela]\nEx: /nova_divida Financiamento carro R$ 1500", lovableKey, telegramKey);
+        break;
+      }
+      const debtVal = extractValue(argStr);
+      const debtDesc = argStr.replace(/R\$\s*[\d.,]+/g, "").replace(/\d+\s*reais/gi, "").trim() || argStr.substring(0, 100);
+
+      if (!debtVal) {
+        const contextToStore = { step: "extraction" as const, descricao: debtDesc, categoria_tipo: "divida", missing_question: "Qual o valor da parcela?" };
+        if (update?.update_id) {
+          await supabase.from("telegram_messages").update({ pending_context: contextToStore }).eq("update_id", update.update_id);
+        }
+        await sendTelegram(chatId, `📝 Dívida: ${debtDesc}\n\n❓ Qual o valor da parcela?`, lovableKey, telegramKey);
+        break;
+      }
+
+      const debtCtx: any = {
+        step: "ask_debt_parcelas",
+        descricao: debtDesc,
+        valor: debtVal,
+        categoria_tipo: "divida",
+      };
+      // Save pending context
+      if (update?.update_id) {
+        await supabase.from("telegram_messages").update({ pending_context: debtCtx }).eq("update_id", update.update_id);
+      }
+      // Also fallback
+      const { data: latestMsg } = await supabase.from("telegram_messages").select("id").eq("chat_id", chatId).order("created_at", { ascending: false }).limit(1).single();
+      if (latestMsg) {
+        await supabase.from("telegram_messages").update({ pending_context: debtCtx }).eq("id", latestMsg.id);
+      }
+
+      await sendTelegram(chatId, `📝 Dívida: ${debtDesc}\n💰 Parcela: R$ ${debtVal.toFixed(2)}\n\n❓ Quantas parcelas no total?`, lovableKey, telegramKey);
+      break;
     }
 
     case "/relatorio": {
@@ -236,7 +299,15 @@ export async function handleCommand(
       if (!argStr) { await sendTelegram(chatId, "Use: /anexar [descrição]\nDepois envie o arquivo.", lovableKey, telegramKey); break; }
       const { data: matchTxs } = await supabase.from("transacoes").select("id, descricao, valor, data_vencimento").eq("user_id", userId).is("deleted_at", null).ilike("descricao", `%${argStr}%`).order("data_vencimento", { ascending: false }).limit(5);
       if (!matchTxs?.length) { await sendTelegram(chatId, `❌ Nenhuma transação com "${argStr}".`, lovableKey, telegramKey); break; }
-      await supabase.from("telegram_messages").update({ pending_context: { last_transaction_id: matchTxs[0].id } }).eq("update_id", update.update_id);
+      // Save pending context via both methods
+      const attachCtx = { last_transaction_id: matchTxs[0].id };
+      if (update?.update_id) {
+        await supabase.from("telegram_messages").update({ pending_context: attachCtx }).eq("update_id", update.update_id);
+      }
+      const { data: latMsg } = await supabase.from("telegram_messages").select("id").eq("chat_id", chatId).order("created_at", { ascending: false }).limit(1).single();
+      if (latMsg) {
+        await supabase.from("telegram_messages").update({ pending_context: attachCtx }).eq("id", latMsg.id);
+      }
       let msg = `📎 Encontrei:\n\n`;
       for (const t of matchTxs) { const [y,m,d] = t.data_vencimento.split("-"); msg += `• ${t.descricao} - R$ ${Number(t.valor).toFixed(2)} (${d}/${m}/${y})\n`; }
       msg += `\nEnvie o comprovante agora.`;
@@ -246,6 +317,15 @@ export async function handleCommand(
 
     case "/nova_recorrencia": {
       if (!argStr) { await sendTelegram(chatId, "Use: /nova_recorrencia [dados]\nEx: /nova_recorrencia Internet Vivo R$ 130 vence dia 15 fixa boleto", lovableKey, telegramKey); break; }
+
+      // FIX: Check for duplicate recurrence
+      const recName = argStr.split(/\s+R\$/)[0].trim() || argStr.substring(0, 30);
+      const { data: existing } = await supabase.from("recorrencias_fixas").select("id, nome").eq("user_id", userId).eq("ativo", true).ilike("nome", `%${recName}%`).limit(1).maybeSingle();
+      if (existing) {
+        await sendTelegram(chatId, `⚠️ Já existe uma recorrência similar: "${existing.nome}". Deseja criar mesmo assim? Envie /nova_recorrencia novamente com um nome diferente.`, lovableKey, telegramKey);
+        break;
+      }
+
       const recExtraction = await extractRecurrenceData(argStr, openaiKey);
       if (!recExtraction || recExtraction.status === "incomplete") { await sendTelegram(chatId, `❓ ${recExtraction?.missing || "Informe nome, valor e dia."}`, lovableKey, telegramKey); break; }
       const recData: any = {
@@ -286,23 +366,37 @@ export async function handleCommand(
       break;
     }
 
+    // FIX #4: /lembretes with numbering and confirmation handler
     case "/lembretes": {
       const { data: lembs } = await supabase.from("lembretes").select("id, titulo, descricao, data_lembrete")
         .eq("user_id", userId).eq("confirmado", false).order("data_lembrete", { nullsFirst: false });
       if (!lembs?.length) { await sendTelegram(chatId, "✅ Nenhum lembrete aberto!", lovableKey, telegramKey); break; }
       let msg = "📝 Lembretes abertos:\n\n";
-      for (const l of lembs) {
-        const data = l.data_lembrete ? ` (${l.data_lembrete})` : "";
-        msg += `• ${l.titulo}${data}\n`;
-        if (l.descricao) msg += `  ${l.descricao}\n`;
+      for (let i = 0; i < lembs.length; i++) {
+        const l = lembs[i];
+        const data = l.data_lembrete ? ` (${l.data_lembrete.split("-").reverse().join("/")})` : "";
+        msg += `${i + 1}. ${l.titulo}${data}\n`;
+        if (l.descricao) msg += `   ${l.descricao}\n`;
       }
+      msg += `\nResponda com o número para confirmar.`;
+
+      // Save pending context with lembretes list
+      const lembCtx = { step: "lembretes_listados", lembretes_list: lembs };
+      if (update?.update_id) {
+        await supabase.from("telegram_messages").update({ pending_context: lembCtx }).eq("update_id", update.update_id);
+      }
+      const { data: latestM } = await supabase.from("telegram_messages").select("id").eq("chat_id", chatId).order("created_at", { ascending: false }).limit(1).single();
+      if (latestM) {
+        await supabase.from("telegram_messages").update({ pending_context: lembCtx }).eq("id", latestM.id);
+      }
+
       await sendTelegram(chatId, msg, lovableKey, telegramKey);
       break;
     }
 
     default:
       await sendTelegram(chatId,
-        "📋 Comandos:\n\n💰 Cadastro:\n/nova_conta — Nova conta\n/novo_banco — Novo banco\n/novo_cartao — Novo cartão\n/nova_recorrencia — Conta fixa\n/adicionar_saldo — Entrada no banco\n\n📊 Consultas:\n/resumo — Gastos do mês\n/relatorio — Relatório mensal\n/pendencias — Pendentes\n/limite — Limites\n/buscar — Buscar\n/pix — Dados PIX\n/anexar — Comprovante\n/lembretes — Lembretes\n\n⚙️ Admin:\n/alterar_limite",
+        "📋 Comandos:\n\n💰 Cadastro:\n/nova_conta - Nova conta\n/nova_divida - Nova dívida\n/novo_banco - Novo banco\n/novo_cartao - Novo cartão\n/nova_recorrencia - Conta fixa\n/adicionar_saldo - Entrada no banco\n\n📊 Consultas:\n/resumo - Gastos do mês\n/relatorio - Relatório mensal\n/pendencias - Pendentes\n/limite - Limites\n/buscar - Buscar\n/pix - Dados PIX\n/anexar - Comprovante\n/lembretes - Lembretes\n\n⚙️ Admin:\n/alterar_limite",
         lovableKey, telegramKey);
   }
 
