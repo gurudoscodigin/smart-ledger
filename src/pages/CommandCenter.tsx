@@ -35,16 +35,18 @@ export default function CommandCenter() {
   const totalAPagar = totalPendente + totalAtrasado;
 
   // Burn rate by category instead of status
+  const txDataRef = txData?.currentMonth;
   const burnData = useMemo(() => {
+    const txs = txDataRef || [];
     const map = new Map<string, number>();
-    currentMonthTxs.forEach(t => {
+    txs.forEach(t => {
       const cat = (t as any).categorias?.nome || "Sem categoria";
       map.set(cat, (map.get(cat) || 0) + Number(t.valor));
     });
     return Array.from(map.entries())
       .map(([name, value], i) => ({ name, value, color: BURN_COLORS[i % BURN_COLORS.length] }))
       .sort((a, b) => b.value - a.value);
-  }, [currentMonthTxs]);
+  }, [txDataRef]);
 
   const allTransactions = [
     ...(txData?.overdue || []).map(t => ({ ...t, _overdue: true })),

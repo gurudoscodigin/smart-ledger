@@ -5,19 +5,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-/**
- * Google Drive Mirroring Edge Function
- * 
- * Triggered after a comprovante is uploaded to Supabase Storage.
- * Mirrors the file to Google Drive with organized folder structure:
- * - Financeiro [Ano] / [Mês] / [Categoria ou Colaborador] / [Tipo]
- * 
- * For collaborators (eh_colaborador=true):
- * - Financeiro [Ano] / [Mês] / [Nome Colaborador] / NF | VR | Comprovante
- * 
- * Requires GOOGLE_DRIVE_API_KEY secret (via Google Drive connector).
- * Falls back to a retry queue if Drive is unavailable.
- */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -41,22 +28,27 @@ Deno.serve(async (req) => {
 
     const vencimento = new Date(tx.data_vencimento);
     const year = vencimento.getFullYear();
+    const monthNum = String(vencimento.getMonth() + 1).padStart(2, "0");
     const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
       "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-    const month = monthNames[vencimento.getMonth()];
+    const month = `${monthNum}-${monthNames[vencimento.getMonth()]}`;
 
     const categoria = (tx.categorias as any);
     const isColaborador = categoria?.eh_colaborador === true;
     const categoryName = categoria?.nome || "Sem Categoria";
 
     // Build Drive path
+    const rootFolder = `CONTROLE FINANCEIRO - financeiro ${year}`;
     let drivePath: string[];
     if (isColaborador) {
-      const docTypeLabel = doc_type === "nf" ? "NF" : doc_type === "vr" ? "VR" : "Comprovantes";
-      drivePath = [`Financeiro ${year}`, month, categoryName, docTypeLabel];
+      const docTypeLabel = doc_type === "nf" ? "NF" :
+                           doc_type === "vr" ? "VR" :
+                           doc_type === "inss_fgts" ? "INSS + FGTS" : "Comprovantes";
+      drivePath = [rootFolder, month, "Colaboradores", categoryName, docTypeLabel];
     } else {
-      const docTypeLabel = tx.categoria_tipo === "divida" ? "Boleto" : "Comprovante";
-      drivePath = [`Financeiro ${year}`, month, categoryName, docTypeLabel];
+      const docTypeLabel = doc_type === "boleto" ? "Boleto" :
+                           doc_type === "nfe" ? "NFe" : "Comprovante";
+      drivePath = [rootFolder, month, categoryName, docTypeLabel];
     }
 
     // Standardized file name
@@ -70,7 +62,6 @@ Deno.serve(async (req) => {
     const GOOGLE_DRIVE_API_KEY = Deno.env.get("GOOGLE_DRIVE_API_KEY");
 
     if (!LOVABLE_API_KEY || !GOOGLE_DRIVE_API_KEY) {
-      // Queue for later - store in comprovantes metadata
       console.log("Google Drive not configured. File queued for manual sync.");
       return new Response(
         JSON.stringify({
@@ -96,7 +87,6 @@ Deno.serve(async (req) => {
     let parentId = "root";
 
     for (const folderName of drivePath) {
-      // Check if folder exists
       const searchResp = await fetch(
         `${GATEWAY_URL}/drive/v3/files?q=name='${encodeURIComponent(folderName)}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`,
         {
@@ -113,7 +103,6 @@ Deno.serve(async (req) => {
       if (existingFolder) {
         parentId = existingFolder.id;
       } else {
-        // Create folder
         const createResp = await fetch(`${GATEWAY_URL}/drive/v3/files`, {
           method: "POST",
           headers: {
