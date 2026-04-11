@@ -498,7 +498,8 @@ async function handlePendingContext(
     if (/boleto/i.test(lower)) {
       ctx.origem = "boleto";
     } else if (/d[eé]bito/i.test(lower)) {
-      ctx.origem = "debito_automatico";
+      await sendTelegram(chatId, "Poderia especificar? A despesa foi no 💳 Cartão, via PIX, em 💵 Dinheiro ou Boleto?", lovableKey, telegramKey);
+      return jsonResponse({ ok: true });
     } else if (/dinheiro/i.test(lower)) {
       ctx.origem = "dinheiro";
     } else {
@@ -742,13 +743,7 @@ async function finalizeTransaction(
     if (cat) txData.categoria_id = cat.id;
   }
 
-  // Deduct card limit for credit card transactions
-  if (txData.cartao_id) {
-    const { data: card } = await supabase.from("cartoes").select("limite_disponivel").eq("id", txData.cartao_id).single();
-    if (card) {
-      await supabase.from("cartoes").update({ limite_disponivel: card.limite_disponivel - ctx.valor }).eq("id", txData.cartao_id);
-    }
-  }
+  // Card limit is calculated at runtime — no manual deduction needed
 
   const { data: newTx, error: txErr } = await supabase.from("transacoes").insert(txData).select("id").single();
 

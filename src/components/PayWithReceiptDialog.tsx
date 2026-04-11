@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, Paperclip, FileText, Image } from "lucide-react";
 import { useComprovantes } from "@/hooks/useComprovantes";
+import { useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 interface Props {
@@ -16,8 +18,10 @@ interface Props {
 
 export function PayWithReceiptDialog({ open, onOpenChange, transaction, onConfirm, isPending }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [processing, setProcessing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const { upload } = useComprovantes(transaction?.id);
+  const queryClient = useQueryClient();
 
   const handleOpen = (isOpen: boolean) => {
     if (!isOpen) setFile(null);
@@ -31,14 +35,37 @@ export function PayWithReceiptDialog({ open, onOpenChange, transaction, onConfir
     setFile(f);
   };
 
-  const handleConfirm = () => {
-    if (!transaction) return;
-    // Upload file if present
-    if (file) {
-      upload.mutate({ transacaoId: transaction.id, file });
+  const handleConfirm = async () => {
+    if (!transaction || processing) return;
+    setProcessing(true);
+    try {
+      // 1. Mark as paid
+      await supabase
+        .from('transacoes')
+        .update({
+          status: 'pago' as any,
+          data_pagamento: new Date().toISOString().split('T')[0]
+        })
+        .eq('id', transaction.id);
+
+      // 2. Upload receipt if present
+      if (file) {
+        await upload.mutateAsync({ transacaoId: transaction.id, file });
+      }
+
+      // 3. Invalidate all relevant queries
+      queryClient.invalidateQueries({ queryKey: ['transacoes'] });
+      queryClient.invalidateQueries({ queryKey: ['comprovantes'] });
+      queryClient.invalidateQueries({ queryKey: ['comprovantes-check'] });
+      queryClient.invalidateQueries({ queryKey: ['cartoes'] });
+
+      toast.success(file ? 'Pago e comprovante anexado!' : 'Pagamento registrado');
+      handleOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao registrar pagamento");
+    } finally {
+      setProcessing(false);
     }
-    onConfirm(transaction.id, file || undefined);
-    handleOpen(false);
   };
 
   const getFileIcon = () => {
@@ -89,8 +116,8 @@ export function PayWithReceiptDialog({ open, onOpenChange, transaction, onConfir
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpen(false)}>Cancelar</Button>
-          <Button onClick={handleConfirm} disabled={isPending}>
-            {isPending ? "Registrando..." : file ? "Pagar e Anexar" : "Pagar sem Comprovante"}
+          <Button onClick={handleConfirm} disabled={isPending || processing}>
+            {processing ? "Registrando..." : file ? "Pagar e Anexar" : "Pagar sem Comprovante"}
           </Button>
         </DialogFooter>
       </DialogContent>
