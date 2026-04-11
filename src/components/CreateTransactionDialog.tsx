@@ -202,7 +202,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
           <DialogTitle>Nova Transação</DialogTitle>
         </DialogHeader>
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="w-full">
+          <TabsList className="w-full" >
             <TabsTrigger value="avulsa" className="flex-1">Avulsa</TabsTrigger>
             <TabsTrigger value="fixa" className="flex-1">Fixa</TabsTrigger>
             <TabsTrigger value="divida" className="flex-1">Dívida</TabsTrigger>
