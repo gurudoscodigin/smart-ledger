@@ -11,6 +11,7 @@ import ControlCenter from "./pages/ControlCenter";
 import TrashPage from "./pages/TrashPage";
 import BillsPage from "./pages/BillsPage";
 import CategoriasPage from "./pages/CategoriasPage";
+import LembretesPage from "./pages/LembretesPage";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
@@ -54,6 +55,7 @@ const App = () => (
             <Route path="/settings" element={<ProtectedRoute><ControlCenter /></ProtectedRoute>} />
             <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
             <Route path="/categorias" element={<ProtectedRoute><CategoriasPage /></ProtectedRoute>} />
+            <Route path="/lembretes" element={<ProtectedRoute><LembretesPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

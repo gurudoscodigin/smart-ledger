@@ -2,9 +2,11 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BarChart3, Download, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BarChart3, Download, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Filter } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useTransacoes } from "@/hooks/useTransacoes";
+import { useCategorias } from "@/hooks/useCategorias";
 import { ImportSpreadsheetDialog } from "@/components/ImportSpreadsheetDialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -35,14 +37,27 @@ export default function ReportsPage() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const { data: txData, isLoading } = useTransacoes({ month, year });
+  const { data: categorias } = useCategorias();
   const [importOpen, setImportOpen] = useState(false);
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set());
+  const [filterCat, setFilterCat] = useState("__all");
+  const [filterSub, setFilterSub] = useState("__all");
 
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
   const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
 
-  const allTx = useMemo(() => [...(txData?.overdue || []), ...(txData?.currentMonth || [])], [txData]);
+  const allTxRaw = useMemo(() => [...(txData?.overdue || []), ...(txData?.currentMonth || [])], [txData]);
+  const allTx = useMemo(() => {
+    return allTxRaw.filter(t => {
+      if (filterCat !== "__all") {
+        if (!t.categoria_id) return false;
+        if (t.categoria_id !== filterCat) return false;
+      }
+      if (filterSub !== "__all" && t.subcategoria !== filterSub) return false;
+      return true;
+    });
+  }, [allTxRaw, filterCat, filterSub]);
 
   const { pago, pendente, atrasado, total } = useMemo(() => {
     const p = allTx.filter(t => t.status === "pago").reduce((s, t) => s + Number(t.valor), 0);
@@ -116,6 +131,18 @@ export default function ReportsPage() {
           <div className="flex justify-center py-20"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
         ) : (
           <>
+            {/* Category/Subcategory Filters */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={filterCat} onValueChange={v => { setFilterCat(v); setFilterSub("__all"); }}>
+                <SelectTrigger className="h-8 w-[180px] text-xs"><SelectValue placeholder="Categoria" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">Todas categorias</SelectItem>
+                  {(categorias || []).map((c: any) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
