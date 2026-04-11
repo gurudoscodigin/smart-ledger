@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,12 @@ import { DollarSign, TrendingDown, TrendingUp, FileText, ChevronLeft, ChevronRig
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useBancos } from "@/hooks/useBancos";
-import { NotificationBell } from "@/components/NotificationBell";
+
+const BURN_COLORS = [
+  "hsl(153, 50%, 45%)", "hsl(217, 70%, 55%)", "hsl(0, 65%, 55%)",
+  "hsl(280, 65%, 55%)", "hsl(30, 80%, 55%)", "hsl(160, 60%, 45%)",
+  "hsl(340, 65%, 55%)", "hsl(200, 70%, 50%)", "hsl(45, 80%, 50%)",
+];
 
 export default function CommandCenter() {
   const now = new Date();
@@ -29,11 +34,17 @@ export default function CommandCenter() {
   const totalAtrasado = currentMonthTxs.filter(t => t.status === "atrasado").reduce((s, t) => s + Number(t.valor), 0);
   const totalAPagar = totalPendente + totalAtrasado;
 
-  const burnData = [
-    { name: "Pago", value: totalPago, color: "hsl(153, 50%, 45%)" },
-    { name: "Pendente", value: totalPendente, color: "hsl(217, 70%, 55%)" },
-    { name: "Atrasado", value: totalAtrasado, color: "hsl(0, 65%, 55%)" },
-  ].filter(d => d.value > 0);
+  // Burn rate by category instead of status
+  const burnData = useMemo(() => {
+    const map = new Map<string, number>();
+    currentMonthTxs.forEach(t => {
+      const cat = (t as any).categorias?.nome || "Sem categoria";
+      map.set(cat, (map.get(cat) || 0) + Number(t.valor));
+    });
+    return Array.from(map.entries())
+      .map(([name, value], i) => ({ name, value, color: BURN_COLORS[i % BURN_COLORS.length] }))
+      .sort((a, b) => b.value - a.value);
+  }, [currentMonthTxs]);
 
   const allTransactions = [
     ...(txData?.overdue || []).map(t => ({ ...t, _overdue: true })),
@@ -60,7 +71,6 @@ export default function CommandCenter() {
             <h1 className="text-2xl font-semibold tracking-tight">Command Center</h1>
             <p className="text-muted-foreground text-sm mt-1">Visão geral do seu fluxo de caixa</p>
           </div>
-          <NotificationBell />
         </div>
 
         {/* Month Navigation */}

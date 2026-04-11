@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, CalendarClock, Zap, ToggleRight, Trash2, Paperclip, FileText, Image, CreditCard, TrendingUp, AlertTriangle, Clock, Check, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { CreateRecorrenciaDialog } from "@/components/CreateRecorrenciaDialog";
 import { CreateTransactionDialog } from "@/components/CreateTransactionDialog";
 import { PayVariableDialog } from "@/components/PayVariableDialog";
@@ -154,7 +155,10 @@ export default function BillsPage() {
 
   const applyFilters = (items: any[]) => {
     return items.filter(t => {
-      if (filterCategoria !== "__all" && t.categoria_id !== filterCategoria) return false;
+      if (filterCategoria !== "__all") {
+        if (!t.categoria_id) return false;
+        if (t.categoria_id !== filterCategoria) return false;
+      }
       if (filterSubcategoria !== "__all" && t.subcategoria !== filterSubcategoria) return false;
       if (filterBanco !== "__all" && t.banco_id !== filterBanco) return false;
       if (filterCartao !== "__all" && t.cartao_id !== filterCartao) return false;
@@ -297,6 +301,20 @@ export default function BillsPage() {
                           <Zap className="w-3 h-3" /> Avulsa
                         </Badge>
                       )}
+                    </div>
+                    {/* Debt progress bar */}
+                    {tx.parcela_atual && tx.parcela_total && (
+                      <div className="mt-1">
+                        <div className="flex justify-between text-[10px] text-muted-foreground mb-0.5">
+                          <span>{tx.parcela_atual}/{tx.parcela_total} parcelas</span>
+                          <span>{Math.round((tx.parcela_atual / tx.parcela_total) * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-accent rounded-full overflow-hidden">
+                          <div className="h-full bg-primary transition-all rounded-full" style={{ width: `${(tx.parcela_atual / tx.parcela_total) * 100}%` }} />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
                       {/* Status badge with receipt warning */}
                       {isPaidNoReceipt ? (
                         <Tooltip>
@@ -323,7 +341,19 @@ export default function BillsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
+                    {tx.categoria_tipo === 'variavel' && tx.status === 'pendente' && Number(tx.valor) === 0 ? (
+                      <Input
+                        type="number"
+                        placeholder="Valor?"
+                        className="h-7 w-24 text-sm"
+                        onBlur={(e) => {
+                          const val = Number(e.target.value);
+                          if (val > 0) updateTransaction.mutate({ id: tx.id, valor: val });
+                        }}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium tabular-nums mr-1">R$ {Number(tx.valor).toFixed(2)}</p>
+                    )}
                     {tx.status !== "pago" && (
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
                         onClick={() => handlePayClick(tx)} disabled={payTransaction.isPending}>

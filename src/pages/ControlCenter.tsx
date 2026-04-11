@@ -114,24 +114,21 @@ export default function ControlCenter() {
 
   const deleteUser = useMutation({
     mutationFn: async (userId: string) => {
-      if (userId === user?.id) {
-        throw new Error("Você não pode excluir sua própria conta");
-      }
+      if (userId === user?.id) throw new Error("Não pode excluir a si mesmo");
       const { error: rErr } = await supabase.from("user_roles").delete().eq("user_id", userId);
       if (rErr) throw rErr;
-      const { data: pData, error: pErr } = await supabase
+      const { error: pErr, count } = await supabase
         .from("profiles")
-        .update({ display_name: "[Removido]" })
-        .eq("user_id", userId)
-        .select("id");
+        .update({ display_name: "[Removido]" }, { count: 'exact' })
+        .eq("user_id", userId);
       if (pErr) throw pErr;
-      if (!pData || pData.length === 0) {
-        throw new Error("Falha ao atualizar profile — verifique permissões admin");
-      }
+      if (count === 0) throw new Error("Nada atualizado — verifique permissões admin");
+      return userId;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["control-users"] });
-      toast.success("Usuário removido (dados históricos preservados)");
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["control-users"] });
+      await queryClient.refetchQueries({ queryKey: ["control-users"] });
+      toast.success("Usuário removido");
     },
     onError: (e: Error) => toast.error(e.message),
   });
