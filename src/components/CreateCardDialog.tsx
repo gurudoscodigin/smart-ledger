@@ -24,6 +24,7 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
     tipo_funcao: "" as any,
     formato: "fisico" as any,
     limite_total: "",
+    limite_credito_disponivel: "",
     dia_fechamento: "25",
     dia_vencimento: "5",
     banco_id: "",
@@ -37,17 +38,19 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
       const [mm, yy] = form.data_validade.split("/");
       dataValidade = `20${yy}-${mm}-01`;
     }
+    const limiteTotal = Number(form.limite_total) || 0;
     await create.mutateAsync({
       ...form,
-      limite_total: Number(form.limite_total) || 0,
+      limite_total: limiteTotal,
       dia_fechamento: Number(form.dia_fechamento),
       dia_vencimento: Number(form.dia_vencimento),
-      limite_disponivel: Number(form.limite_total) || 0,
+      limite_disponivel: limiteTotal,
+      limite_credito_disponivel: form.tipo_funcao === "multiplo" ? (Number(form.limite_credito_disponivel) || 0) : 0,
       banco_id: form.banco_id,
       data_validade: dataValidade,
     });
     onOpenChange(false);
-    setForm({ apelido: "", final_cartao: "", bandeira: "" as any, tipo_funcao: "" as any, formato: "fisico" as any, limite_total: "", dia_fechamento: "25", dia_vencimento: "5", banco_id: "", data_validade: "" });
+    setForm({ apelido: "", final_cartao: "", bandeira: "" as any, tipo_funcao: "" as any, formato: "fisico" as any, limite_total: "", limite_credito_disponivel: "", dia_fechamento: "25", dia_vencimento: "5", banco_id: "", data_validade: "" });
   };
 
   return (
@@ -103,6 +106,15 @@ export function CreateCardDialog({ open, onOpenChange }: Props) {
               <Label>Limite Total (R$)</Label>
               <CurrencyInput value={form.limite_total} onValueChange={v => setForm(f => ({ ...f, limite_total: v }))} required />
             </div>
+
+            {/* Bug 7: Show credit limit field for multiplo cards */}
+            {form.tipo_funcao === "multiplo" && (
+              <div className="col-span-2">
+                <Label>Limite da função Crédito (R$)</Label>
+                <CurrencyInput value={form.limite_credito_disponivel} onValueChange={v => setForm(f => ({ ...f, limite_credito_disponivel: v }))} placeholder="Limite exclusivo para crédito" />
+              </div>
+            )}
+
             <div>
               <Label>Dia Fechamento</Label>
               <NumericInput value={form.dia_fechamento} onValueChange={v => setForm(f => ({ ...f, dia_fechamento: v }))} placeholder="25" required />
