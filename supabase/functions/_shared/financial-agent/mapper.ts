@@ -5,6 +5,32 @@
 import type { AgentContext } from "./types.ts";
 
 /**
+ * Build standardized description format:
+ * DD/MM/AAAA — Cartão final XXXX — Categoria — Subcategoria
+ * DD/MM/AAAA — Banco NomeDoBanco — Categoria — Subcategoria
+ */
+export function buildFormattedDescription(ctx: AgentContext): string {
+  const date = ctx.data_vencimento || new Date().toISOString().split("T")[0];
+  const [y, m, d] = date.split("-");
+  const datePart = `${d}/${m}/${y}`;
+
+  let sourcePart = "—";
+  if (ctx.cartao_display) {
+    sourcePart = `Cartão final ${ctx.cartao_display.match(/\d{4}/)?.[0] || "????"}`;
+  } else if (ctx.banco_display) {
+    sourcePart = `Banco ${ctx.banco_display}`;
+  } else if (ctx.origem) {
+    const labels: Record<string, string> = { pix: "PIX", boleto: "Boleto", dinheiro: "Dinheiro", cartao: "Cartão" };
+    sourcePart = labels[ctx.origem] || ctx.origem;
+  }
+
+  const catPart = ctx.categoria_ref || "Sem categoria";
+  const subPart = ctx.subcategoria || "Geral";
+
+  return `${datePart} — ${sourcePart} — ${catPart} — ${subPart}`;
+}
+
+/**
  * Map agent context → transacoes INSERT payload
  */
 export function contextToTransactionPayload(
@@ -30,7 +56,7 @@ export function contextToTransactionPayload(
   if (ctx.banco_id_resolved) payload.banco_id = ctx.banco_id_resolved;
   if (ctx.categoria_id_resolved) payload.categoria_id = ctx.categoria_id_resolved;
   if (ctx.recorrencia_id) payload.recorrencia_id = ctx.recorrencia_id;
-  if (ctx.contrato_id) payload.id_contrato = ctx.contrato_id;
+  if (ctx.contrato_id) payload.contrato_id = ctx.contrato_id;
   if (ctx.parcela_atual) payload.parcela_atual = ctx.parcela_atual;
   if (ctx.parcela_total) payload.parcela_total = ctx.parcela_total;
 
@@ -51,6 +77,7 @@ export function contextToConfirmationMessage(ctx: AgentContext): string {
   msg += `💰 R$ ${Number(ctx.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
   msg += `📅 ${ctx.data_vencimento ? fmtDate(ctx.data_vencimento) : "Hoje"}\n`;
   msg += `📊 Status: ${ctx.status_pagamento === "pago" ? "✅ Pago" : "⏳ Pendente"}\n`;
+  msg += `📦 Tipo: ${ctx.categoria_tipo || "avulsa"}\n`;
 
   if (ctx.categoria_ref) {
     msg += `🏷️ ${ctx.categoria_ref}`;
