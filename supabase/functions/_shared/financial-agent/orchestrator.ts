@@ -797,11 +797,31 @@ async function finalizeTransaction(
     }
   }
 
-  // PIX: deduct bank balance
-  if (ctx.origem === "pix" && ctx.banco_id_resolved && ctx.status_pagamento === "pago" && ctx.valor) {
-    const { data: banco } = await supabase.from("bancos").select("saldo_atual").eq("id", ctx.banco_id_resolved).single();
-    if (banco) {
-      await supabase.from("bancos").update({ saldo_atual: banco.saldo_atual - ctx.valor }).eq("id", ctx.banco_id_resolved);
+  // ─── Financial effects ───
+  if (ctx.status_pagamento === "pago" && ctx.valor) {
+    // Credit card: deduct limite_disponivel
+    if (ctx.origem === "cartao" && ctx.cartao_id_resolved) {
+      const { data: cartao } = await supabase.from("cartoes").select("limite_disponivel, tipo_funcao, banco_id").eq("id", ctx.cartao_id_resolved).single();
+      if (cartao) {
+        // Only deduct limit for credit function
+        if (cartao.tipo_funcao === "credito" || cartao.tipo_funcao === "multiplo") {
+          await supabase.from("cartoes").update({ limite_disponivel: cartao.limite_disponivel - ctx.valor }).eq("id", ctx.cartao_id_resolved);
+        }
+        // Debit function: deduct from bank
+        if (cartao.tipo_funcao === "debito" && cartao.banco_id) {
+          const { data: banco } = await supabase.from("bancos").select("saldo_atual").eq("id", cartao.banco_id).single();
+          if (banco) {
+            await supabase.from("bancos").update({ saldo_atual: banco.saldo_atual - ctx.valor }).eq("id", cartao.banco_id);
+          }
+        }
+      }
+    }
+    // PIX/Debit: deduct bank balance
+    if ((ctx.origem === "pix" || ctx.origem === "debito_automatico" || ctx.origem === "dinheiro") && ctx.banco_id_resolved) {
+      const { data: banco } = await supabase.from("bancos").select("saldo_atual").eq("id", ctx.banco_id_resolved).single();
+      if (banco) {
+        await supabase.from("bancos").update({ saldo_atual: banco.saldo_atual - ctx.valor }).eq("id", ctx.banco_id_resolved);
+      }
     }
   }
 

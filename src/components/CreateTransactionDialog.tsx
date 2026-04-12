@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useTransacoes } from "@/hooks/useTransacoes";
 import { useCartoes } from "@/hooks/useCartoes";
 import { useBancos } from "@/hooks/useBancos";
@@ -39,9 +40,9 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
     cartao_id: "",
     categoria_id: "",
     subcategoria: "",
+    multiplo_funcao: "" as "credito" | "debito" | "",
   });
 
-  // Fixed tab state
   const [fixed, setFixed] = useState({
     descricao: "", valor: "", data_vencimento: new Date().toISOString().split("T")[0],
     ehVariavel: false,
@@ -50,6 +51,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
     cartao_id: "",
     categoria_id: "",
     subcategoria: "",
+    multiplo_funcao: "" as "credito" | "debito" | "",
   });
 
   const [inst, setInst] = useState({ descricao: "", valorTotal: "", parcelas: "2", cartaoId: "", diaCobranca: "10" });
@@ -58,17 +60,25 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
   const { data: subcategorias } = useSubcategorias(simple.categoria_id || undefined);
   const { data: fixedSubcategorias } = useSubcategorias(fixed.categoria_id || undefined);
 
+  // Find selected card to check tipo_funcao
+  const selectedSimpleCard = (cartoes || []).find(c => c.id === simple.cartao_id);
+  const isSimpleMultiplo = selectedSimpleCard?.tipo_funcao === "multiplo";
+  const selectedFixedCard = (cartoes || []).find(c => c.id === fixed.cartao_id);
+  const isFixedMultiplo = selectedFixedCard?.tipo_funcao === "multiplo";
+
   const needsBank = simple.forma_pagamento === "pix" || simple.forma_pagamento === "dinheiro";
   const needsCard = simple.forma_pagamento === "cartao";
   const simpleCanSubmit = !createTransaction.isPending
     && (!needsBank || simple.banco_id)
-    && (!needsCard || simple.cartao_id);
+    && (!needsCard || simple.cartao_id)
+    && (!isSimpleMultiplo || simple.multiplo_funcao);
 
   const fixedNeedsBank = fixed.forma_pagamento === "pix" || fixed.forma_pagamento === "dinheiro";
   const fixedNeedsCard = fixed.forma_pagamento === "cartao";
   const fixedCanSubmit = !createTransaction.isPending
     && (!fixedNeedsBank || fixed.banco_id)
-    && (!fixedNeedsCard || fixed.cartao_id);
+    && (!fixedNeedsCard || fixed.cartao_id)
+    && (!isFixedMultiplo || fixed.multiplo_funcao);
 
   const setFormaPagamento = (v: string) => {
     setSimple(s => ({
@@ -76,6 +86,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
       forma_pagamento: v,
       cartao_id: v === "cartao" ? s.cartao_id : "",
       banco_id: v === "cartao" ? "" : s.banco_id,
+      multiplo_funcao: "",
     }));
   };
 
@@ -85,11 +96,19 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
       forma_pagamento: v,
       cartao_id: v === "cartao" ? s.cartao_id : "",
       banco_id: v === "cartao" ? "" : s.banco_id,
+      multiplo_funcao: "",
     }));
+  };
+
+  // Determine effective origem for multiplo cards
+  const getEffectiveOrigem = (formaPagamento: string, multiploFuncao: string) => {
+    if (formaPagamento === "cartao" && multiploFuncao === "debito") return "debito_automatico";
+    return formaPagamento || null;
   };
 
   const handleSimple = async (e: React.FormEvent) => {
     e.preventDefault();
+    const origem = getEffectiveOrigem(simple.forma_pagamento, simple.multiplo_funcao);
     await createTransaction.mutateAsync({
       descricao: simple.descricao,
       valor: Number(simple.valor),
@@ -99,7 +118,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
       cartao_id: simple.cartao_id || null,
       categoria_id: simple.categoria_id || null,
       subcategoria: simple.subcategoria || null,
-      origem: (simple.forma_pagamento as any) || null,
+      origem: (origem as any) || null,
       status: "pendente",
     });
     onOpenChange(false);
@@ -107,6 +126,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
 
   const handleFixed = async (e: React.FormEvent) => {
     e.preventDefault();
+    const origem = getEffectiveOrigem(fixed.forma_pagamento, fixed.multiplo_funcao);
     await createTransaction.mutateAsync({
       descricao: fixed.descricao,
       valor: fixed.ehVariavel ? 0 : Number(fixed.valor),
@@ -116,7 +136,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
       cartao_id: fixed.cartao_id || null,
       categoria_id: fixed.categoria_id || null,
       subcategoria: fixed.subcategoria || null,
-      origem: (fixed.forma_pagamento as any) || null,
+      origem: (origem as any) || null,
       status: "pendente",
     });
     onOpenChange(false);
@@ -150,7 +170,8 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
     setState: React.Dispatch<React.SetStateAction<typeof simple>>,
     setForma: (v: string) => void,
     nBank: boolean,
-    nCard: boolean
+    nCard: boolean,
+    isMultiplo: boolean
   ) => (
     <>
       <div><Label>Forma de pagamento</Label>
@@ -182,18 +203,40 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
       {nCard && (
         <div>
           <Label className="flex items-center gap-1">Cartão <span className="text-destructive">*</span></Label>
-          <Select value={state.cartao_id} onValueChange={v => setState(s => ({ ...s, cartao_id: v }))}>
+          <Select value={state.cartao_id} onValueChange={v => setState(s => ({ ...s, cartao_id: v, multiplo_funcao: "" }))}>
             <SelectTrigger><SelectValue placeholder="Qual cartão?" /></SelectTrigger>
             <SelectContent>
               {(cartoes || []).map(c => (
-                <SelectItem key={c.id} value={c.id}>{c.apelido} (•••• {c.final_cartao})</SelectItem>
+                <SelectItem key={c.id} value={c.id}>
+                  {c.apelido} (•••• {c.final_cartao}) {(c as any).bancos?.nome ? `- ${(c as any).bancos.nome}` : ""}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
       )}
+
+      {/* Bug 7: Show debit/credit selector for multiplo cards */}
+      {nCard && isMultiplo && (
+        <div>
+          <Label className="flex items-center gap-1">Função do cartão <span className="text-destructive">*</span></Label>
+          <RadioGroup value={state.multiplo_funcao} onValueChange={v => setState(s => ({ ...s, multiplo_funcao: v as any }))}>
+            <div className="flex items-center space-x-2">
+              <RadioGroupItem value="credito" id={`credito-${state.forma_pagamento}`} />
+              <Label htmlFor={`credito-${state.forma_pagamento}`}>Crédito</Label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <RadioGroupItem value="debito" id={`debito-${state.forma_pagamento}`} />
+              <Label htmlFor={`debito-${state.forma_pagamento}`}>Débito</Label>
+            </div>
+          </RadioGroup>
+        </div>
+      )}
     </>
   );
+
+  // Bug 3: When defaultTab is set, hide the tab bar
+  const showTabs = !defaultTab;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,12 +245,14 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
           <DialogTitle>Nova Transação</DialogTitle>
         </DialogHeader>
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="w-full" >
-            <TabsTrigger value="avulsa" className="flex-1">Avulsa</TabsTrigger>
-            <TabsTrigger value="fixa" className="flex-1">Fixa</TabsTrigger>
-            <TabsTrigger value="divida" className="flex-1">Dívida</TabsTrigger>
-            <TabsTrigger value="pix" className="flex-1">PIX Rápido</TabsTrigger>
-          </TabsList>
+          {showTabs && (
+            <TabsList className="w-full">
+              <TabsTrigger value="avulsa" className="flex-1">Avulsa</TabsTrigger>
+              <TabsTrigger value="fixa" className="flex-1">Fixa</TabsTrigger>
+              <TabsTrigger value="divida" className="flex-1">Dívida</TabsTrigger>
+              <TabsTrigger value="pix" className="flex-1">PIX Rápido</TabsTrigger>
+            </TabsList>
+          )}
 
           {/* Tab Avulsa */}
           <TabsContent value="avulsa">
@@ -242,7 +287,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
                 </div>
               )}
 
-              {renderPaymentFields(simple, setSimple, setFormaPagamento, needsBank, needsCard)}
+              {renderPaymentFields(simple, setSimple, setFormaPagamento, needsBank, needsCard, isSimpleMultiplo)}
 
               <Button type="submit" className="w-full" disabled={!simpleCanSubmit}>Registrar</Button>
             </form>
@@ -296,7 +341,7 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
               )}
 
               {renderPaymentFields(
-                fixed as any, setFixed as any, setFixedFormaPagamento, fixedNeedsBank, fixedNeedsCard
+                fixed as any, setFixed as any, setFixedFormaPagamento, fixedNeedsBank, fixedNeedsCard, isFixedMultiplo
               )}
 
               <Button type="submit" className="w-full" disabled={!fixedCanSubmit}>Registrar</Button>
@@ -316,7 +361,9 @@ export function CreateTransactionDialog({ open, onOpenChange, defaultTab }: Prop
                   <SelectTrigger><SelectValue placeholder="Selecione o cartão" /></SelectTrigger>
                   <SelectContent>
                     {(cartoes || []).map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.apelido} (•••• {c.final_cartao})</SelectItem>
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.apelido} (•••• {c.final_cartao}) {(c as any).bancos?.nome ? `- ${(c as any).bancos.nome}` : ""}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

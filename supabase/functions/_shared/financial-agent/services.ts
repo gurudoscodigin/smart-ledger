@@ -51,36 +51,95 @@ export function extractDate(text: string): string | null {
   return null;
 }
 
+/**
+ * Extract monetary value from text.
+ * CRITICAL BUG FIX: Dot followed by 3 digits = thousands separator (6.500 → 6500).
+ * Comma or dot followed by 1-2 digits = decimal (6,50 → 6.50).
+ */
 export function extractValue(text: string): number | null {
   const normalized = removeAccents(text.toLowerCase());
 
-  const brFormat = text.match(/R\$\s*([\d.]+,\d{2})/);
-  if (brFormat) return parseFloat(brFormat[1].replace(/\./g, "").replace(",", "."));
+  // R$ 1.200,00 or 1.200,00 — Brazilian full format
+  const brFull = text.match(/R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{1,2})/);
+  if (brFull) return parseFloat(brFull[1].replace(/\./g, "").replace(",", "."));
 
-  const brFormat2 = text.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/);
-  if (brFormat2) return parseFloat(brFormat2[1].replace(/\./g, "").replace(",", "."));
+  // R$ followed by number — e.g. R$ 350, R$55, R$ 6.500
+  const rMatch = text.match(/R\$\s*([\d.,]+)/);
+  if (rMatch) {
+    return parseBRValue(rMatch[1]);
+  }
 
-  const simpleR = text.match(/R\$\s*([\d.]+)/);
-  if (simpleR) return parseFloat(simpleR[1].replace(/\./g, ""));
+  // "X reais" pattern
+  const reais = normalized.match(/([\d.,]+)\s*reais/);
+  if (reais) {
+    return parseBRValue(reais[1]);
+  }
 
-  const reais = normalized.match(/([\d.]+)\s*reais/);
-  if (reais) return parseFloat(reais[1].replace(/\./g, ""));
+  // "X conto(s)" pattern
+  const contos = normalized.match(/([\d.,]+)\s*conto/);
+  if (contos) {
+    return parseBRValue(contos[1]);
+  }
 
+  // "mil e quinhentos" etc.
   if (/mil e quinhentos/.test(normalized)) return 1500;
-  if (/mil/.test(normalized)) {
+  if (/\bmil\b/.test(normalized)) {
     const milMatch = normalized.match(/(\d+)\s*mil/);
     if (milMatch) return parseInt(milMatch[1]) * 1000;
   }
 
+  // Installment pattern: "12x de 350" or "12 x de 350"
+  const installmentMatch = normalized.match(/(\d+)\s*x\s*(?:de\s*)?([\d.,]+)/);
+  if (installmentMatch) {
+    return parseBRValue(installmentMatch[2]);
+  }
+
+  // Fallback: any number in the text
   const nums = text.match(/\b(\d+(?:[.,]\d+)?)\b/g);
   if (nums) {
     for (const n of nums) {
-      const val = parseFloat(n.replace(",", "."));
-      if (val > 0 && val < 1000000) return val;
+      const val = parseBRValue(n);
+      if (val !== null && val > 0 && val < 1000000) return val;
     }
   }
 
   return null;
+}
+
+/**
+ * Parse a Brazilian-formatted value string to a float.
+ * Rules:
+ *   - Dot followed by exactly 3 digits = thousands separator → remove dot
+ *   - Comma followed by 1-2 digits = decimal separator → replace with dot
+ *   - Single number with dot and 1-2 digits after = decimal
+ */
+function parseBRValue(raw: string): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+
+  // Has both dot and comma: 1.200,50 → 1200.50
+  if (s.includes(".") && s.includes(",")) {
+    return parseFloat(s.replace(/\./g, "").replace(",", "."));
+  }
+
+  // Has comma only: 42,73 → 42.73 or 1200,50 → 1200.50
+  if (s.includes(",")) {
+    return parseFloat(s.replace(",", "."));
+  }
+
+  // Has dot only: check if thousands separator
+  if (s.includes(".")) {
+    const parts = s.split(".");
+    const lastPart = parts[parts.length - 1];
+    // Dot followed by exactly 3 digits = thousands separator (6.500 → 6500)
+    if (lastPart.length === 3) {
+      return parseFloat(s.replace(/\./g, ""));
+    }
+    // Dot followed by 1-2 digits = decimal (6.50 → 6.50)
+    return parseFloat(s);
+  }
+
+  return parseFloat(s) || null;
 }
 
 export function detectStatus(text: string): "pago" | "pendente" | null {
@@ -110,6 +169,39 @@ export function extractBankRef(text: string): string | null {
   }
   const contaMatch = normalized.match(/(?:conta|banco)\s+(\w+)/);
   if (contaMatch) return contaMatch[1];
+  return null;
+}
+
+/**
+ * Detect installment patterns in text.
+ * Returns { parcelas, valor_parcela } or null.
+ */
+export function detectInstallment(text: string): { parcelas: number; valor_parcela: number } | null {
+  const normalized = removeAccents(text.toLowerCase());
+
+  // "12x de 350" or "12 x de 350" or "12x de R$ 350"
+  const xDe = normalized.match(/(\d+)\s*x\s*(?:de\s*)?(?:r\$\s*)?([\d.,]+)/);
+  if (xDe) {
+    const parcelas = parseInt(xDe[1]);
+    const valor = parseBRValue(xDe[2]);
+    if (parcelas > 1 && valor && valor > 0) return { parcelas, valor_parcela: valor };
+  }
+
+  // "parcelei em 12 vezes de 350"
+  const vezes = normalized.match(/(\d+)\s*(?:vezes|parcelas?)\s*(?:de\s*)?(?:r\$\s*)?([\d.,]+)/);
+  if (vezes) {
+    const parcelas = parseInt(vezes[1]);
+    const valor = parseBRValue(vezes[2]);
+    if (parcelas > 1 && valor && valor > 0) return { parcelas, valor_parcela: valor };
+  }
+
+  // "dividido em 12" (no value)
+  const dividido = normalized.match(/(?:dividido|parcelado|parcelei)\s*(?:em\s*)?(\d+)/);
+  if (dividido) {
+    const parcelas = parseInt(dividido[1]);
+    if (parcelas > 1) return { parcelas, valor_parcela: 0 };
+  }
+
   return null;
 }
 
@@ -198,10 +290,10 @@ export async function resolveCategory(
 
 export async function resolveCard(
   supabase: any, userId: string, cardRef: string
-): Promise<{ id: string; apelido: string; final_cartao: string; banco_id: string | null } | null> {
+): Promise<{ id: string; apelido: string; final_cartao: string; banco_id: string | null; tipo_funcao: string } | null> {
   const { data } = await supabase
     .from("cartoes")
-    .select("id, apelido, final_cartao, banco_id")
+    .select("id, apelido, final_cartao, banco_id, tipo_funcao")
     .eq("user_id", userId)
     .is("deleted_at", null)
     .or(`final_cartao.eq.${cardRef},apelido.ilike.%${cardRef}%`)
@@ -223,7 +315,6 @@ export async function resolveBank(
   return data;
 }
 
-// FIX #9: Improved recurrence matching — use word-level matching instead of raw substring
 export async function resolveRecurrence(
   supabase: any, userId: string, description: string
 ): Promise<{
@@ -232,7 +323,6 @@ export async function resolveRecurrence(
   origem: string | null; eh_variavel: boolean;
   subcategoria: string | null; valor_estimado: number;
 } | null> {
-  // Extract meaningful words (3+ chars) for matching
   const words = description
     .split(/\s+/)
     .filter(w => w.length >= 3)
@@ -240,7 +330,6 @@ export async function resolveRecurrence(
 
   if (words.length === 0) return null;
 
-  // Try each word individually, prefer longer matches
   for (const word of words) {
     const { data } = await supabase
       .from("recorrencias_fixas")
@@ -250,23 +339,18 @@ export async function resolveRecurrence(
       .ilike("nome", `%${word}%`)
       .limit(3);
 
-    if (data && data.length === 1) {
-      return data[0]; // Unique match — confident
-    }
+    if (data && data.length === 1) return data[0];
     if (data && data.length > 1) {
-      // Multiple matches — try to narrow down with additional words
       const bestMatch = data.find((r: any) =>
         words.every(w => r.nome.toLowerCase().includes(w))
       );
       if (bestMatch) return bestMatch;
-      // Return first if no exact multi-word match
       return data[0];
     }
   }
   return null;
 }
 
-// FIX #10: Add .limit(100) to vendor alias query
 export async function resolveVendorAlias(
   supabase: any, userId: string, text: string
 ): Promise<{

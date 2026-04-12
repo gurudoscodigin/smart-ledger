@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useContratosDivida } from "@/hooks/useContratosDivida";
 import { useBancos } from "@/hooks/useBancos";
+import { useCartoes } from "@/hooks/useCartoes";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { NumericInput } from "@/components/NumericInput";
 
@@ -19,16 +20,19 @@ interface Props {
 export function AmortizacaoDialog({ open, onOpenChange, contrato }: Props) {
   const { registrarAmortizacao } = useContratosDivida();
   const { data: bancos } = useBancos();
+  const { data: cartoes } = useCartoes();
 
   const [tipo, setTipo] = useState("parcela_extra");
   const [valor, setValor] = useState("");
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().split("T")[0]);
   const [parcelasAntecipadas, setParcelasAntecipadas] = useState("1");
   const [efeito, setEfeito] = useState("reduz_prazo");
+  const [formaPagamento, setFormaPagamento] = useState("");
   const [bancoId, setBancoId] = useState("");
+  const [cartaoId, setCartaoId] = useState("");
+  const [multiploFuncao, setMultiploFuncao] = useState<"credito" | "debito" | "">("");
   const [observacoes, setObservacoes] = useState("");
 
-  // Pre-fill valor based on type
   const valorParcela = Number(contrato?.valor_parcela || 0);
 
   const prefilledValor = useMemo(() => {
@@ -39,11 +43,17 @@ export function AmortizacaoDialog({ open, onOpenChange, contrato }: Props) {
 
   const effectiveValor = valor || prefilledValor;
 
-  const canSubmit = Number(effectiveValor) > 0 && dataPagamento && !registrarAmortizacao.isPending;
+  const selectedCard = (cartoes || []).find(c => c.id === cartaoId);
+  const isMultiplo = selectedCard?.tipo_funcao === "multiplo";
+
+  const canSubmit = Number(effectiveValor) > 0 && dataPagamento && formaPagamento && !registrarAmortizacao.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!contrato) return;
+
+    const effectiveBancoId = formaPagamento === "cartao" ? undefined : (bancoId || undefined);
+
     await registrarAmortizacao.mutateAsync({
       contratoId: contrato.id,
       tipo,
@@ -51,7 +61,7 @@ export function AmortizacaoDialog({ open, onOpenChange, contrato }: Props) {
       dataPagamento,
       parcelasAntecipadas: tipo === "parcelas_antecipadas" ? Number(parcelasAntecipadas) : undefined,
       efeito: tipo === "parcelas_antecipadas" ? efeito : undefined,
-      bancoId: bancoId || undefined,
+      bancoId: effectiveBancoId,
       observacoes: observacoes || undefined,
     });
     onOpenChange(false);
@@ -109,11 +119,7 @@ export function AmortizacaoDialog({ open, onOpenChange, contrato }: Props) {
 
           <div>
             <Label>Valor (R$) *</Label>
-            <CurrencyInput
-              value={effectiveValor}
-              onValueChange={setValor}
-              required
-            />
+            <CurrencyInput value={effectiveValor} onValueChange={setValor} required />
           </div>
 
           <div>
@@ -134,15 +140,61 @@ export function AmortizacaoDialog({ open, onOpenChange, contrato }: Props) {
             </RadioGroup>
           )}
 
+          {/* Bug 8: Payment method selector */}
           <div>
-            <Label>Banco de origem</Label>
-            <Select value={bancoId} onValueChange={setBancoId}>
-              <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <Label className="flex items-center gap-1">Forma de pagamento <span className="text-destructive">*</span></Label>
+            <Select value={formaPagamento} onValueChange={v => { setFormaPagamento(v); setCartaoId(""); setBancoId(""); setMultiploFuncao(""); }}>
+              <SelectTrigger><SelectValue placeholder="Como vai pagar?" /></SelectTrigger>
               <SelectContent>
-                {(bancos || []).map(b => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}
+                <SelectItem value="pix">PIX</SelectItem>
+                <SelectItem value="cartao">Cartão</SelectItem>
+                <SelectItem value="boleto">Boleto</SelectItem>
+                <SelectItem value="dinheiro">Dinheiro</SelectItem>
               </SelectContent>
             </Select>
           </div>
+
+          {(formaPagamento === "pix" || formaPagamento === "dinheiro") && (
+            <div>
+              <Label>Banco de origem</Label>
+              <Select value={bancoId} onValueChange={setBancoId}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  {(bancos || []).map(b => <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {formaPagamento === "cartao" && (
+            <>
+              <div>
+                <Label>Cartão</Label>
+                <Select value={cartaoId} onValueChange={v => { setCartaoId(v); setMultiploFuncao(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o cartão" /></SelectTrigger>
+                  <SelectContent>
+                    {(cartoes || []).map(c => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.apelido} (•••• {c.final_cartao}) {(c as any).bancos?.nome ? `- ${(c as any).bancos.nome}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {isMultiplo && (
+                <RadioGroup value={multiploFuncao} onValueChange={v => setMultiploFuncao(v as any)}>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="credito" id="amort-credito" />
+                    <Label htmlFor="amort-credito">Crédito</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="debito" id="amort-debito" />
+                    <Label htmlFor="amort-debito">Débito</Label>
+                  </div>
+                </RadioGroup>
+              )}
+            </>
+          )}
 
           <div>
             <Label>Observações</Label>
