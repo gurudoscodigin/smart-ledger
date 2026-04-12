@@ -133,7 +133,7 @@ function maybeThrowConnectorQueuedError(
   drivePath: string[],
   standardizedName: string,
 ) {
-  const credentialMissing = response.status === 401
+  const credentialMissing = [401, 403].includes(response.status)
     && responseData?.type === "unauthorized"
     && responseData?.message === "Credential not found"
     && responseData?.props?.source === "connectors_gateway";
