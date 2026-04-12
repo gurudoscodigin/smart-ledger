@@ -22,7 +22,7 @@ const items = [
   { title: "Relatórios", url: "/reports", icon: BarChart3 },
   { title: "Categorias", url: "/categorias", icon: FolderTree },
   { title: "Lembretes", url: "/lembretes", icon: Bell },
-  { title: "Auditor", url: "/auditor", icon: FileSearch },
+  { title: "Comprovantes", url: "/comprovantes", icon: FileSearch },
   { title: "Configurações", url: "/settings", icon: Settings },
 ];
 

@@ -57,7 +57,9 @@ const App = () => (
             <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
             <Route path="/categorias" element={<ProtectedRoute><CategoriasPage /></ProtectedRoute>} />
             <Route path="/lembretes" element={<ProtectedRoute><LembretesPage /></ProtectedRoute>} />
-            <Route path="/auditor" element={<ProtectedRoute><Auditor /></ProtectedRoute>} />
+            <Route path="/comprovantes" element={<ProtectedRoute><Auditor /></ProtectedRoute>} />
+            {/* Redirect old /auditor route */}
+            <Route path="/auditor" element={<Navigate to="/comprovantes" replace />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
