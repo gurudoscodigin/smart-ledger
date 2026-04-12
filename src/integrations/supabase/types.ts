@@ -393,6 +393,7 @@ export type Database = {
           formato: Database["public"]["Enums"]["formato_emissao"]
           id: string
           id_cartao_pai: string | null
+          limite_credito_disponivel: number | null
           limite_disponivel: number
           limite_total: number
           tipo_funcao: Database["public"]["Enums"]["tipo_funcao_cartao"]
@@ -412,6 +413,7 @@ export type Database = {
           formato?: Database["public"]["Enums"]["formato_emissao"]
           id?: string
           id_cartao_pai?: string | null
+          limite_credito_disponivel?: number | null
           limite_disponivel?: number
           limite_total?: number
           tipo_funcao: Database["public"]["Enums"]["tipo_funcao_cartao"]
@@ -431,6 +433,7 @@ export type Database = {
           formato?: Database["public"]["Enums"]["formato_emissao"]
           id?: string
           id_cartao_pai?: string | null
+          limite_credito_disponivel?: number | null
           limite_disponivel?: number
           limite_total?: number
           tipo_funcao?: Database["public"]["Enums"]["tipo_funcao_cartao"]
@@ -489,6 +492,7 @@ export type Database = {
           file_path: string
           file_type: string | null
           id: string
+          tipo_documento: string | null
           transacao_id: string
           uploaded_by: string | null
         }
@@ -499,6 +503,7 @@ export type Database = {
           file_path: string
           file_type?: string | null
           id?: string
+          tipo_documento?: string | null
           transacao_id: string
           uploaded_by?: string | null
         }
@@ -509,6 +514,7 @@ export type Database = {
           file_path?: string
           file_type?: string | null
           id?: string
+          tipo_documento?: string | null
           transacao_id?: string
           uploaded_by?: string | null
         }
